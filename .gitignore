@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+*.tgz
+*.tmxplug
+.claude_local/
+.upstream-cache/
+out/
+.claude/worktrees/

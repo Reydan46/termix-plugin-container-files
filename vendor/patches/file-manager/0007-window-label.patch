@@ -1,0 +1,40 @@
+diff --git a/components/DraggableWindow.tsx b/components/DraggableWindow.tsx
+index 4f42b8a..9fb4eec 100644
+--- a/components/DraggableWindow.tsx
++++ b/components/DraggableWindow.tsx
+@@ -21,6 +21,8 @@ interface DraggableWindowProps {
+   onFocus?: () => void;
+   targetSize?: { width: number; height: number };
+   titleActions?: React.ReactNode;
++  /** Badge before the title; defaults to "Editor", "" hides it. */
++  label?: string;
+ }
+ 
+ export function DraggableWindow({
+@@ -41,6 +43,7 @@ export function DraggableWindow({
+   onFocus,
+   targetSize,
+   titleActions,
++  label,
+ }: DraggableWindowProps) {
+   const { t } = useTranslation();
+   const [position, setPosition] = useState({ x: initialX, y: initialY });
+@@ -282,10 +285,14 @@ export function DraggableWindow({
+         onDoubleClick={handleTitleDoubleClick}
+       >
+         <div className="flex items-center gap-3 flex-1 overflow-hidden">
+-          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-accent-brand shrink-0">
+-            {t("fileManager.editor")}
+-          </span>
+-          <div className="h-4 w-px bg-border/50 shrink-0" />
++          {(label ?? t("fileManager.editor")) !== "" && (
++            <>
++              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-accent-brand shrink-0">
++                {label ?? t("fileManager.editor")}
++              </span>
++              <div className="h-4 w-px bg-border/50 shrink-0" />
++            </>
++          )}
+           <span className="text-[10px] font-bold tracking-tight text-muted-foreground truncate">
+             {title}
+           </span>

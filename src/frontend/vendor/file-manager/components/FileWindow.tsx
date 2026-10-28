@@ -1,0 +1,512 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+import React, { useState, useEffect, useRef } from "react";
+import { DraggableWindow } from "./DraggableWindow.tsx";
+import { FileViewer } from "./FileViewer.tsx";
+import { useWindowManager } from "./WindowManager.tsx";
+import {
+  downloadSSHFileStream,
+  readSSHFile,
+  writeSSHFile,
+  getSSHStatus,
+  connectSSH,
+  setSudoPassword,
+} from "../api/ssh-file-operations-api";
+import { SudoPasswordDialog } from "../SudoPasswordDialog.tsx";
+import { toast } from "sonner";
+import { DownloadProgressToast } from "./DownloadProgressToast";
+import type { SSHHost } from "../host-types";
+import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+
+interface FileItem {
+  name: string;
+  type: "file" | "directory" | "link";
+  path: string;
+  size?: number;
+  modified?: string;
+  permissions?: string;
+  owner?: string;
+  group?: string;
+}
+
+interface FileWindowProps {
+  windowId: string;
+  file: FileItem;
+  sshSessionId: string;
+  sshHost: SSHHost;
+  initialX?: number;
+  initialY?: number;
+  /** Window title; defaults to the file name. */
+  title?: string;
+  /** Badge before the title; defaults to "Editor", "" hides it. */
+  label?: string;
+  /** Replaces the title bar text (see DraggableWindow). */
+  titleContent?: React.ReactNode;
+  onFileNotFound?: (file: FileItem) => void;
+}
+
+function isDisplayableText(str: string): boolean {
+  let printable = 0;
+  for (let i = 0; i < Math.min(str.length, 1000); i++) {
+    const code = str.charCodeAt(i);
+    if (
+      (code >= 32 && code <= 126) ||
+      code === 9 ||
+      code === 10 ||
+      code === 13 ||
+      code >= 128
+    ) {
+      printable++;
+    }
+  }
+  return printable / Math.min(str.length, 1000) > 0.85;
+}
+
+export function FileWindow({
+  windowId,
+  file,
+  sshSessionId,
+  sshHost,
+  initialX = 100,
+  initialY = 100,
+  title,
+  label,
+  titleContent,
+  onFileNotFound,
+}: FileWindowProps) {
+  const { closeWindow, maximizeWindow, focusWindow, windows } =
+    useWindowManager();
+
+  const { t } = useTranslation();
+
+  const [content, setContent] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isEditable, setIsEditable] = useState(false);
+  const [pendingContent, setPendingContent] = useState<string>("");
+  const [resetKey, setResetKey] = useState(0);
+  const [mediaDimensions, setMediaDimensions] = useState<
+    { width: number; height: number } | undefined
+  >();
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const currentWindow = windows.find((w) => w.id === windowId);
+
+  // Media is held as an object URL; free the Blob when it is replaced or closed.
+  useEffect(
+    () => () => {
+      if (content.startsWith("blob:")) URL.revokeObjectURL(content);
+    },
+    [content],
+  );
+
+  const ensureSSHConnection = async () => {
+    const status = await getSSHStatus(sshSessionId);
+
+    if (!status.connected) {
+      await connectSSH(sshSessionId, {
+        hostId: sshHost.id,
+        connectionOrigin: sshHost.connectionOrigin,
+        syncId: sshHost.syncId ?? null,
+        ip: sshHost.ip,
+        port: sshHost.port,
+        username: sshHost.username,
+        password: sshHost.password,
+        sshKey: sshHost.key,
+        keyPassword: sshHost.keyPassword,
+        authType: sshHost.authType,
+        credentialId: sshHost.credentialId,
+        userId: sshHost.userId,
+      });
+    }
+  };
+
+  useEffect(() => {
+    const loadFileContent = async () => {
+      if (file.type !== "file") return;
+
+      try {
+        setIsLoading(true);
+
+        await ensureSSHConnection();
+
+        const response = await readSSHFile(sshSessionId, file.path);
+        let fileContent = response.content || "";
+
+        if (response.encoding === "base64") {
+          try {
+            const bytes = Uint8Array.from(atob(fileContent), (c) =>
+              c.charCodeAt(0),
+            );
+            const decoded = new TextDecoder("utf-8").decode(bytes);
+            if (isDisplayableText(decoded)) {
+              fileContent = decoded;
+            }
+          } catch {
+            // Not valid UTF-8, keep the raw content
+          }
+        }
+
+        setContent(fileContent);
+        setPendingContent(fileContent);
+        setResetKey((k) => k + 1);
+
+        if (!file.size) {
+          const contentSize = new Blob([fileContent]).size;
+          file.size = contentSize;
+        }
+
+        const mediaExtensions = [
+          "jpg",
+          "jpeg",
+          "png",
+          "gif",
+          "bmp",
+          "svg",
+          "webp",
+          "tiff",
+          "ico",
+          "mp3",
+          "wav",
+          "ogg",
+          "aac",
+          "flac",
+          "m4a",
+          "wma",
+          "mp4",
+          "avi",
+          "mov",
+          "wmv",
+          "flv",
+          "mkv",
+          "webm",
+          "m4v",
+          "zip",
+          "rar",
+          "7z",
+          "tar",
+          "gz",
+          "bz2",
+          "xz",
+          "exe",
+          "dll",
+          "so",
+          "dylib",
+          "bin",
+          "iso",
+        ];
+
+        const extension = file.name.split(".").pop()?.toLowerCase();
+        setIsEditable(!mediaExtensions.includes(extension || ""));
+      } catch (error: unknown) {
+        const err = error as {
+          message?: string;
+          isFileNotFound?: boolean;
+          response?: {
+            status?: number;
+            data?: {
+              tooLarge?: boolean;
+              error?: string;
+              fileNotFound?: boolean;
+            };
+          };
+        };
+        const errorData = err?.response?.data;
+        if (errorData?.tooLarge) {
+          toast.error(
+            t("fileManager.fileTooLarge", { error: errorData.error }),
+            {
+              duration: 10000,
+            },
+          );
+        } else if (
+          err.message?.includes("connection") ||
+          err.message?.includes("established")
+        ) {
+          toast.error(
+            `SSH connection failed. Please check your connection to ${sshHost.name} (${sshHost.ip}:${sshHost.port})`,
+          );
+        } else {
+          const errorMessage =
+            errorData?.error || err.message || "Unknown error";
+          const isFileNotFound =
+            err.isFileNotFound ||
+            errorData?.fileNotFound ||
+            err.response?.status === 404 ||
+            errorMessage.includes("File not found") ||
+            errorMessage.includes("No such file or directory") ||
+            errorMessage.includes("cannot access") ||
+            errorMessage.includes("not found") ||
+            errorMessage.includes("Resource not found");
+
+          if (isFileNotFound && onFileNotFound) {
+            onFileNotFound(file);
+            toast.error(
+              t("fileManager.fileNotFoundAndRemoved", { name: file.name }),
+            );
+
+            closeWindow(windowId);
+            return;
+          } else {
+            toast.error(
+              t("fileManager.failedToLoadFile", {
+                error: errorMessage.includes("Server error occurred")
+                  ? t("fileManager.serverErrorOccurred")
+                  : errorMessage,
+              }),
+            );
+          }
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadFileContent();
+  }, [file, sshSessionId, sshHost]);
+
+  const handleRevert = async () => {
+    const loadFileContent = async () => {
+      if (file.type !== "file") return;
+
+      try {
+        setIsLoading(true);
+
+        await ensureSSHConnection();
+
+        const response = await readSSHFile(sshSessionId, file.path, {
+          force: true,
+        });
+        const fileContent = response.content || "";
+        setContent(fileContent);
+        setPendingContent("");
+        setResetKey((k) => k + 1);
+
+        if (!file.size) {
+          const contentSize = new Blob([fileContent]).size;
+          file.size = contentSize;
+        }
+      } catch (error: unknown) {
+        const err = error as { message?: string };
+        toast.error(
+          `${t("fileManager.failedToLoadFile")}: ${err.message || t("fileManager.unknownError")}`,
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadFileContent();
+  };
+
+  const [sudoSaveContent, setSudoSaveContent] = useState<string | null>(null);
+
+  const handleSudoSave = async (password: string) => {
+    const pending = sudoSaveContent;
+    setSudoSaveContent(null);
+    if (pending === null) return;
+    try {
+      await setSudoPassword(sshSessionId, password);
+    } catch {
+      toast.error(t("fileManager.sudoAuthFailed"));
+      return;
+    }
+    await handleSave(pending);
+  };
+
+  const handleSave = async (newContent: string) => {
+    try {
+      setIsSaving(true);
+
+      await ensureSSHConnection();
+
+      await writeSSHFile(sshSessionId, file.path, newContent);
+      setContent(newContent);
+      setPendingContent("");
+
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+
+      toast.success(t("fileManager.fileSavedSuccessfully"));
+    } catch (error: unknown) {
+      const err = error as {
+        message?: string;
+        response?: { data?: { needsSudo?: boolean } };
+      };
+      if (err.response?.data?.needsSudo) {
+        setSudoSaveContent(newContent);
+      } else if (
+        err.message?.includes("connection") ||
+        err.message?.includes("established")
+      ) {
+        toast.error(
+          t("fileManager.sshConnectionFailed", {
+            name: sshHost.name,
+            ip: sshHost.ip,
+            port: sshHost.port,
+          }),
+        );
+      } else {
+        toast.error(
+          `${t("fileManager.failedToSaveFile")}: ${err.message || t("fileManager.unknownError")}`,
+        );
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleContentChange = (newContent: string) => {
+    setPendingContent(newContent);
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    if (newContent !== content) {
+      autoSaveTimerRef.current = setTimeout(async () => {
+        try {
+          await handleSave(newContent);
+          toast.success(t("fileManager.fileAutoSaved"));
+        } catch (error) {
+          toast.error(t("fileManager.autoSaveFailed"));
+        }
+      }, 60000);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleDownload = async () => {
+    const controller = new AbortController();
+    const cancel = {
+      label: t("fileManager.cancel"),
+      onClick: () => controller.abort(),
+    };
+    const toastId = toast.loading(
+      <DownloadProgressToast t={t} fileName={file.name} loaded={0} />,
+      { duration: Infinity, cancel },
+    );
+    try {
+      await ensureSSHConnection();
+      controller.signal.throwIfAborted();
+
+      await downloadSSHFileStream(
+        sshSessionId,
+        file.path,
+        ({ loaded, total }) => {
+          if (controller.signal.aborted) return;
+          toast.loading(
+            <DownloadProgressToast
+              t={t}
+              fileName={file.name}
+              loaded={loaded}
+              total={total}
+            />,
+            { id: toastId, duration: Infinity, cancel },
+          );
+        },
+        controller.signal,
+      );
+      toast.success(
+        t("fileManager.fileDownloadedSuccessfully", { name: file.name }),
+      );
+    } catch (error: unknown) {
+      if (controller.signal.aborted) {
+        toast.info(t("fileManager.localTransferCancelled"));
+        return;
+      }
+
+      const err = error as { message?: string };
+      if (
+        err.message?.includes("connection") ||
+        err.message?.includes("established")
+      ) {
+        toast.error(
+          `SSH connection failed. Please check your connection to ${sshHost.name} (${sshHost.ip}:${sshHost.port})`,
+        );
+      } else {
+        toast.error(
+          `Failed to download file: ${err.message || "Unknown error"}`,
+        );
+      }
+    } finally {
+      // The progress toast carries a Cancel button and never times out, so it
+      // is removed explicitly; results are shown as separate toasts.
+      toast.dismiss(toastId);
+    }
+  };
+
+  const handleClose = () => {
+    closeWindow(windowId);
+  };
+
+  const handleMaximize = () => {
+    maximizeWindow(windowId);
+  };
+
+  const handleFocus = () => {
+    focusWindow(windowId);
+  };
+
+  const handleMediaDimensionsChange = (dimensions: {
+    width: number;
+    height: number;
+  }) => {
+    setMediaDimensions(dimensions);
+  };
+
+  if (!currentWindow) {
+    return null;
+  }
+
+  return (
+    <DraggableWindow
+      title={title ?? file.name}
+      label={label}
+      titleContent={titleContent}
+      initialX={initialX}
+      initialY={initialY}
+      initialWidth={800}
+      initialHeight={600}
+      minWidth={400}
+      minHeight={300}
+      onClose={handleClose}
+      onMaximize={handleMaximize}
+      onFocus={handleFocus}
+      isMaximized={currentWindow.isMaximized}
+      zIndex={currentWindow.zIndex}
+      targetSize={mediaDimensions}
+    >
+      <FileViewer
+        file={file}
+        content={pendingContent || content}
+        savedContent={content}
+        isLoading={isLoading}
+        isSaving={isSaving}
+        resetKey={resetKey}
+        onRevert={handleRevert}
+        isEditable={isEditable}
+        onContentChange={handleContentChange}
+        onSave={(newContent) => handleSave(newContent)}
+        onDownload={handleDownload}
+        onMediaDimensionsChange={handleMediaDimensionsChange}
+      />
+      <SudoPasswordDialog
+        open={sudoSaveContent !== null}
+        onOpenChange={(open) => {
+          if (!open) setSudoSaveContent(null);
+        }}
+        onSubmit={(password) => void handleSudoSave(password)}
+      />
+    </DraggableWindow>
+  );
+}

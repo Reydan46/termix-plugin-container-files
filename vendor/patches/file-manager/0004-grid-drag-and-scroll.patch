@@ -1,0 +1,63 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 9700a02..866600a 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -130,6 +130,8 @@ interface FileManagerGridProps {
+    */
+   parentPath?: string | null;
+   onNavigateUp?: () => void;
++  /** Scrolls back to the top whenever this value changes (e.g. the folder). */
++  scrollResetKey?: string;
+ }
+ 
+ const getFileTypeColor = (file: FileItem): string => {
+@@ -278,6 +280,7 @@ export function FileManagerGrid({
+   onSortChange,
+   parentPath,
+   onNavigateUp,
++  scrollResetKey,
+ }: FileManagerGridProps) {
+   const { t } = useTranslation();
+   const gridRef = useRef<HTMLDivElement>(null);
+@@ -331,7 +334,6 @@ export function FileManagerGrid({
+     estimateSize: () => LIST_ROW_H,
+     overscan: 16,
+     getItemKey: (index) => files[index]?.path ?? index,
+-    enabled: viewMode === "list" && files.length > 0,
+   });
+ 
+   const listColumns = useResizableColumns({
+@@ -354,9 +356,32 @@ export function FileManagerGrid({
+     estimateSize: () => GRID_ROW_H,
+     overscan: 6,
+     getItemKey: (index) => `row-${index}`,
+-    enabled: viewMode === "grid" && files.length > 0,
+   });
+ 
++  // A virtualizer that was disabled while the list was empty keeps a stale
++  // scroll offset, which leaves a gap above the first row.
++  useLayoutEffect(() => {
++    if (gridRef.current) gridRef.current.scrollTop = 0;
++  }, [scrollResetKey]);
++
++  // The dragged row can be removed (virtualised away or refreshed) before the
++  // browser fires dragend, which would leave the drag overlay on screen.
++  // Native drags swallow mouse events, so any mouse move without a pressed
++  // button means the drag is over.
++  useEffect(() => {
++    if (dragState.type !== "internal") return;
++    const end = () => setDragState({ type: "none", files: [], counter: 0 });
++    const onMove = (e: MouseEvent) => {
++      if (e.buttons === 0) end();
++    };
++    window.addEventListener("dragend", end, true);
++    window.addEventListener("mousemove", onMove, true);
++    return () => {
++      window.removeEventListener("dragend", end, true);
++      window.removeEventListener("mousemove", onMove, true);
++    };
++  }, [dragState.type]);
++
+   useLayoutEffect(() => {
+     if (viewMode === "list") listVirtualizer.measure();
+     else gridVirtualizer.measure();

@@ -1,0 +1,28 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 866600a..4b1d8aa 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -1462,9 +1462,13 @@ export function FileManagerGrid({
+                     <div
+                       key={vItem.key}
+                       data-index={vItem.index}
+-                      ref={listVirtualizer.measureElement}
+                       className="absolute top-0 left-0 w-full"
+                       style={{
++                        // Rows are not measured: an explicit height equal to
++                        // estimateSize keeps the stride stable across sorts,
++                        // renames and refreshes (measure() would reset
++                        // mounted rows to the estimate while the DOM differs).
++                        height: LIST_ROW_H,
+                         transform: `translateY(${vItem.start}px)`,
+                       }}
+                     >
+@@ -1477,7 +1481,7 @@ export function FileManagerGrid({
+                             : listColumns.gridTemplateColumns,
+                         }}
+                         className={cn(
+-                          "grid gap-2 items-center cursor-pointer border-l-2 border-transparent hover:bg-muted/50 rounded-none select-none transition-colors text-xs",
++                          "grid gap-2 items-center cursor-pointer border-l-2 border-transparent hover:bg-muted/50 rounded-none select-none transition-colors text-xs h-full box-border overflow-hidden",
+                           compact ? "px-3 py-1" : "px-3 py-2",
+                           isSelected &&
+                             "border-accent-brand bg-accent-brand/10 hover:bg-accent-brand/10",

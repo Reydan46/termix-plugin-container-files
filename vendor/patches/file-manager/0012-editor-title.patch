@@ -1,0 +1,34 @@
+diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
+index 9946b0b..0b7b008 100644
+--- a/components/FileWindow.tsx
++++ b/components/FileWindow.tsx
+@@ -37,6 +37,10 @@ interface FileWindowProps {
+   sshHost: SSHHost;
+   initialX?: number;
+   initialY?: number;
++  /** Window title; defaults to the file name. */
++  title?: string;
++  /** Badge before the title; defaults to "Editor", "" hides it. */
++  label?: string;
+   onFileNotFound?: (file: FileItem) => void;
+ }
+ 
+@@ -64,6 +68,8 @@ export function FileWindow({
+   sshHost,
+   initialX = 100,
+   initialY = 100,
++  title,
++  label,
+   onFileNotFound,
+ }: FileWindowProps) {
+   const { closeWindow, maximizeWindow, focusWindow, windows } =
+@@ -571,7 +577,8 @@ export function FileWindow({
+ 
+   return (
+     <DraggableWindow
+-      title={file.name}
++      title={title ?? file.name}
++      label={label}
+       initialX={initialX}
+       initialY={initialY}
+       initialWidth={800}

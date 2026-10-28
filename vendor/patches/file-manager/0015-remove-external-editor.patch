@@ -1,0 +1,276 @@
+diff --git a/FileManagerContextMenu.tsx b/FileManagerContextMenu.tsx
+--- a/FileManagerContextMenu.tsx
++++ b/FileManagerContextMenu.tsx
+@@ -20,7 +20,6 @@
+   FileArchive,
+   ArrowRightLeft,
+   Link,
+-  ExternalLink,
+ } from "lucide-react";
+ import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+ import { Kbd, KbdKey, KbdSeparator } from "@termix-ssh/plugin-sdk/ui";
+@@ -57,7 +56,6 @@
+   onRefresh?: () => void;
+   onPaste?: () => void;
+   onPreview?: (file: FileItem) => void;
+-  onOpenExternally?: (file: FileItem) => void;
+   hasClipboard?: boolean;
+   onDragToDesktop?: () => void;
+   onOpenTerminal?: (path: string) => void;
+@@ -111,7 +109,6 @@
+   onRefresh,
+   onPaste,
+   onPreview,
+-  onOpenExternally,
+   hasClipboard = false,
+   onDragToDesktop,
+   onOpenTerminal,
+@@ -267,14 +264,6 @@
+       });
+     }
+ 
+-    if (hasFiles && onOpenExternally) {
+-      menuItems.push({
+-        icon: <ExternalLink className="size-3.5" />,
+-        label: t("fileManager.openExternalEditor"),
+-        action: () => onOpenExternally(files[0]),
+-        disabled: !isSingleFile || files[0].type !== "file",
+-      });
+-    }
+     if (hasFiles && onDownload) {
+       menuItems.push({
+         icon: <Download className="size-3.5" />,
+diff --git a/components/FileViewer.tsx b/components/FileViewer.tsx
+--- a/components/FileViewer.tsx
++++ b/components/FileViewer.tsx
+@@ -17,8 +17,6 @@
+   Save,
+   RotateCcw,
+   Keyboard,
+-  ExternalLink,
+-  Settings,
+   Search,
+   ZoomIn,
+   ZoomOut,
+@@ -84,8 +82,6 @@
+   onSave?: (content: string) => void;
+   onRevert?: () => void;
+   onDownload?: () => void;
+-  onOpenExternal?: () => void;
+-  onChooseExternalEditor?: () => void;
+   onMediaDimensionsChange?: (dimensions: {
+     width: number;
+     height: number;
+@@ -229,8 +225,6 @@
+   onSave,
+   onRevert,
+   onDownload,
+-  onOpenExternal,
+-  onChooseExternalEditor,
+   onMediaDimensionsChange,
+ }: FileViewerProps) {
+   const { t } = useTranslation();
+@@ -474,30 +468,6 @@
+                 {t("fileManager.download")}
+               </Button>
+             )}
+-            {isEditable && onOpenExternal && (
+-              <div className="flex items-center gap-1">
+-                <Button
+-                  variant="outline"
+-                  size="sm"
+-                  onClick={onOpenExternal}
+-                  className="flex items-center gap-2"
+-                >
+-                  <ExternalLink className="w-4 h-4" />
+-                  {t("fileManager.openExternalEditor")}
+-                </Button>
+-                {onChooseExternalEditor && (
+-                  <Button
+-                    variant="ghost"
+-                    size="sm"
+-                    onClick={onChooseExternalEditor}
+-                    className="h-8 w-8 p-0"
+-                    title={t("fileManager.chooseExternalEditor")}
+-                  >
+-                    <Settings className="w-4 h-4" />
+-                  </Button>
+-                )}
+-              </div>
+-            )}
+           </div>
+         </div>
+       </div>
+diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
+--- a/components/FileWindow.tsx
++++ b/components/FileWindow.tsx
+@@ -16,8 +16,6 @@
+ import { DownloadProgressToast } from "./DownloadProgressToast";
+ import type { SSHHost } from "../host-types";
+ import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+-import { fileManagerApi } from "../api/client";
+-import { subscribeLocalEvents } from "../lib/local-events";
+ 
+ interface FileItem {
+   name: string;
+@@ -89,12 +87,7 @@
+   const [mediaDimensions, setMediaDimensions] = useState<
+     { width: number; height: number } | undefined
+   >();
+-  const [externalEditorPath, setExternalEditorPath] = useState<string>("");
+   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+-  const externalEditorRef = useRef<{
+-    editId: string;
+-    unsubscribe?: () => void;
+-  } | null>(null);
+ 
+   const currentWindow = windows.find((w) => w.id === windowId);
+ 
+@@ -106,17 +99,6 @@
+     [content],
+   );
+ 
+-  useEffect(() => {
+-    if (!window.electronAPI?.isElectron) return;
+-
+-    window.electronAPI
+-      .getSetting?.("fileManager.externalEditorPath")
+-      .then((value) => {
+-        if (typeof value === "string") setExternalEditorPath(value);
+-      })
+-      .catch(() => {});
+-  }, []);
+-
+   const ensureSSHConnection = async () => {
+     const status = await getSSHStatus(sshSessionId);
+ 
+@@ -375,96 +357,6 @@
+     }
+   };
+ 
+-  const closeExternalEditor = async () => {
+-    const session = externalEditorRef.current;
+-    if (!session) return;
+-
+-    session.unsubscribe?.();
+-    externalEditorRef.current = null;
+-
+-    try {
+-      await fileManagerApi().post("/local/editor/close", {
+-        editId: session.editId,
+-      });
+-    } catch {
+-      // The editor may already be closed
+-    }
+-  };
+-
+-  const handleOpenExternalEditor = async () => {
+-    if (!window.electronAPI?.isElectron) {
+-      toast.error(t("fileManager.externalEditorDesktopOnly"));
+-      return;
+-    }
+-
+-    try {
+-      await closeExternalEditor();
+-      const { data: result } = await fileManagerApi().post<{
+-        success: boolean;
+-        editId?: string;
+-        error?: string;
+-      }>("/local/editor/open", {
+-        fileName: file.name,
+-        content: pendingContent || content,
+-        encoding: "utf8",
+-      });
+-
+-      if (!result.success || !result.editId) {
+-        throw new Error(result.error || "Failed to open external editor");
+-      }
+-
+-      const unsubscribe = subscribeLocalEvents((event) => {
+-        if (event.type !== "editor-saved" || event.editId !== result.editId) {
+-          return;
+-        }
+-        void handleSave(String(event.content));
+-      });
+-
+-      externalEditorRef.current = {
+-        editId: result.editId,
+-        unsubscribe,
+-      };
+-      toast.success(t("fileManager.externalEditorOpened"));
+-    } catch (error: unknown) {
+-      const err = error as { message?: string };
+-      toast.error(
+-        `${t("fileManager.failedToOpenExternalEditor")}: ${
+-          err.message || t("fileManager.unknownError")
+-        }`,
+-      );
+-    }
+-  };
+-
+-  const handleChooseExternalEditor = async () => {
+-    if (!window.electronAPI?.isElectron) {
+-      toast.error(t("fileManager.externalEditorDesktopOnly"));
+-      return;
+-    }
+-
+-    try {
+-      const result = await window.electronAPI.showOpenDialog({
+-        title: t("fileManager.chooseExternalEditor"),
+-        properties: ["openFile"],
+-      });
+-      const editorPath = result.filePaths?.[0];
+-      if (result.canceled || !editorPath) return;
+-
+-      await window.electronAPI.setSetting?.(
+-        "fileManager.externalEditorPath",
+-        editorPath,
+-      );
+-      setExternalEditorPath(editorPath);
+-      toast.success(t("fileManager.externalEditorSelected"));
+-    } catch (error: unknown) {
+-      const err = error as { message?: string };
+-      toast.error(
+-        `${t("fileManager.failedToSelectExternalEditor")}: ${
+-          err.message || t("fileManager.unknownError")
+-        }`,
+-      );
+-    }
+-  };
+-
+   const handleContentChange = (newContent: string) => {
+     setPendingContent(newContent);
+ 
+@@ -490,7 +382,6 @@
+       if (autoSaveTimerRef.current) {
+         clearTimeout(autoSaveTimerRef.current);
+       }
+-      void closeExternalEditor();
+     };
+   }, []);
+ 
+@@ -555,7 +446,6 @@
+   };
+ 
+   const handleClose = () => {
+-    void closeExternalEditor();
+     closeWindow(windowId);
+   };
+ 
+@@ -608,16 +498,6 @@
+         onContentChange={handleContentChange}
+         onSave={(newContent) => handleSave(newContent)}
+         onDownload={handleDownload}
+-        onOpenExternal={
+-          window.electronAPI?.isElectron && isEditable
+-            ? handleOpenExternalEditor
+-            : undefined
+-        }
+-        onChooseExternalEditor={
+-          window.electronAPI?.isElectron && isEditable
+-            ? handleChooseExternalEditor
+-            : undefined
+-        }
+         onMediaDimensionsChange={handleMediaDimensionsChange}
+       />
+       <SudoPasswordDialog

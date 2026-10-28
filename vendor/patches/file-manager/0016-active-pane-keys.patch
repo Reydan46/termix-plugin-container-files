@@ -1,0 +1,21 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -10,6 +10,7 @@
+ import { createPortal } from "react-dom";
+ import { useVirtualizer } from "@tanstack/react-virtual";
+ import { cn } from "@termix-ssh/plugin-sdk/ui";
++import { isActivePane, PANE_ATTR } from "../../paneFocus";
+ import {
+   Folder,
+   File,
+@@ -1001,6 +1002,9 @@
+           ? grid.checkVisibility({ visibilityProperty: true })
+           : grid.offsetParent !== null;
+       if (!isVisible) return;
++      // Several panes can be visible at once: only the one the user last
++      // pressed handles keys (see paneFocus.ts).
++      if (!isActivePane(grid.closest(`[${PANE_ATTR}]`))) return;
+ 
+       const activeElement = document.activeElement;
+       if (

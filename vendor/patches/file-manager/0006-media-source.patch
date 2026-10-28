@@ -1,0 +1,138 @@
+diff --git a/components/AudioPreview.tsx b/components/AudioPreview.tsx
+index a8e9741..810527d 100644
+--- a/components/AudioPreview.tsx
++++ b/components/AudioPreview.tsx
+@@ -4,6 +4,7 @@ import "react-h5-audio-player/lib/styles.css";
+ import { Music } from "lucide-react";
+ import { cn } from "@termix-ssh/plugin-sdk/ui";
+ import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
++import { mediaSource } from "../api/ssh-file-operations-api";
+ 
+ interface FileItem {
+   name: string;
+@@ -56,7 +57,7 @@ export function AudioPreview({
+ }: AudioPreviewProps) {
+   const { t } = useTranslation();
+   const ext = file.name.split(".").pop()?.toLowerCase() || "";
+-  const audioUrl = `data:${getAudioMimeType(file.name)};base64,${content}`;
++  const audioUrl = mediaSource(content, getAudioMimeType(file.name));
+ 
+   return (
+     <div className="p-6 flex items-center justify-center h-full">
+diff --git a/components/FileViewer.tsx b/components/FileViewer.tsx
+index c0f3f3c..464c195 100644
+--- a/components/FileViewer.tsx
++++ b/components/FileViewer.tsx
+@@ -2,6 +2,7 @@
+ import React, { Suspense, lazy, useState, useEffect, useRef } from "react";
+ import { cn } from "@termix-ssh/plugin-sdk/ui";
+ import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
++import { mediaSource } from "../api/ssh-file-operations-api";
+ import {
+   FileText,
+   Image as ImageIcon,
+@@ -759,7 +760,7 @@ export function FileViewer({
+                   }
+                 })();
+ 
+-                const videoUrl = `data:${mimeType};base64,${content}`;
++                const videoUrl = mediaSource(content, mimeType);
+ 
+                 return (
+                   <div className="relative">
+diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
+index 8255f88..9946b0b 100644
+--- a/components/FileWindow.tsx
++++ b/components/FileWindow.tsx
+@@ -89,6 +89,14 @@ export function FileWindow({
+ 
+   const currentWindow = windows.find((w) => w.id === windowId);
+ 
++  // Media is held as an object URL; free the Blob when it is replaced or closed.
++  useEffect(
++    () => () => {
++      if (content.startsWith("blob:")) URL.revokeObjectURL(content);
++    },
++    [content],
++  );
++
+   useEffect(() => {
+     if (!window.electronAPI?.isElectron) return;
+ 
+@@ -510,14 +518,10 @@ export function FileWindow({
+       );
+       toast.success(
+         t("fileManager.fileDownloadedSuccessfully", { name: file.name }),
+-        { id: toastId, duration: undefined },
+       );
+     } catch (error: unknown) {
+       if (controller.signal.aborted) {
+-        toast.info(t("fileManager.localTransferCancelled"), {
+-          id: toastId,
+-          duration: undefined,
+-        });
++        toast.info(t("fileManager.localTransferCancelled"));
+         return;
+       }
+ 
+@@ -528,14 +532,16 @@ export function FileWindow({
+       ) {
+         toast.error(
+           `SSH connection failed. Please check your connection to ${sshHost.name} (${sshHost.ip}:${sshHost.port})`,
+-          { id: toastId, duration: undefined },
+         );
+       } else {
+         toast.error(
+           `Failed to download file: ${err.message || "Unknown error"}`,
+-          { id: toastId, duration: undefined },
+         );
+       }
++    } finally {
++      // The progress toast carries a Cancel button and never times out, so it
++      // is removed explicitly; results are shown as separate toasts.
++      toast.dismiss(toastId);
+     }
+   };
+ 
+diff --git a/components/ImagePreview.tsx b/components/ImagePreview.tsx
+index 9ae6565..ef223bc 100644
+--- a/components/ImagePreview.tsx
++++ b/components/ImagePreview.tsx
+@@ -4,6 +4,7 @@ import "react-photo-view/dist/react-photo-view.css";
+ import { AlertCircle, Download } from "lucide-react";
+ import { Button } from "@termix-ssh/plugin-sdk/ui";
+ import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
++import { mediaSource } from "../api/ssh-file-operations-api";
+ 
+ interface ImagePreviewProps {
+   content: string;
+@@ -32,7 +33,7 @@ function getImageDataUrl(content: string, fileName: string): string {
+   };
+ 
+   const mimeType = mimeTypes[ext] || "image/png";
+-  return `data:${mimeType};base64,${content}`;
++  return mediaSource(content, mimeType);
+ }
+ 
+ export function ImagePreview({
+diff --git a/components/PdfPreview.tsx b/components/PdfPreview.tsx
+index b7c207e..0d53f0e 100644
+--- a/components/PdfPreview.tsx
++++ b/components/PdfPreview.tsx
+@@ -3,6 +3,7 @@ import { Document, Page, pdfjs } from "react-pdf";
+ import { AlertCircle, Download } from "lucide-react";
+ import { Button } from "@termix-ssh/plugin-sdk/ui";
+ import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
++import { mediaSource } from "../api/ssh-file-operations-api";
+ import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+ 
+ pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+@@ -103,7 +104,7 @@ export function PdfPreview({
+             </div>
+           ) : (
+             <Document
+-              file={`data:application/pdf;base64,${content}`}
++              file={mediaSource(content, "application/pdf")}
+               onLoadSuccess={({ numPages }) => {
+                 setNumPages(numPages);
+                 setPdfError(false);

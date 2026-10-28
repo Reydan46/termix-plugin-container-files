@@ -1,0 +1,45 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 4e7fd45..9700a02 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -148,6 +148,22 @@ const getFileIcon = (
+   file: FileItem,
+   viewMode: "grid" | "list" = "grid",
+   compact = false,
++) => {
++  const icon = getBaseFileIcon(file, viewMode, compact);
++  // Links to files and folders keep their icon but get a link badge.
++  if (!file.linkTarget || file.type === "link") return icon;
++  return (
++    <span className="relative inline-flex">
++      {icon}
++      <FileSymlink className="absolute -bottom-1 -right-1 size-3 rounded-sm bg-background text-blue-400" />
++    </span>
++  );
++};
++
++const getBaseFileIcon = (
++  file: FileItem,
++  viewMode: "grid" | "list" = "grid",
++  compact = false,
+ ) => {
+   const iconClass = compact
+     ? viewMode === "grid"
+@@ -1290,7 +1306,7 @@ export function FileManagerGrid({
+                                       {formatFileSize(file.size)}
+                                     </p>
+                                   )}
+-                                {file.type === "link" && file.linkTarget && (
++                                {file.linkTarget && (
+                                   <p
+                                     className="text-[10px] text-accent-brand mt-0.5 truncate w-full text-center"
+                                     title={file.linkTarget}
+@@ -1490,7 +1506,7 @@ export function FileManagerGrid({
+                               title={file.name}
+                             >
+                               {file.name}
+-                              {file.type === "link" && file.linkTarget && (
++                              {file.linkTarget && (
+                                 <span className="text-accent-brand ml-1 normal-case font-normal">
+                                   → {file.linkTarget}
+                                 </span>

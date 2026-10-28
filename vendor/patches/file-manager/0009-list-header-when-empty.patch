@@ -1,0 +1,26 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 4b1d8aa..8705362 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -1209,7 +1209,7 @@ export function FileManagerGrid({
+           onContextMenu={(e) => onContextMenu?.(e)}
+           tabIndex={0}
+         >
+-          {files.length === 0 && !createIntent ? (
++          {files.length === 0 && !createIntent && viewMode === "grid" ? (
+             <div className="h-full flex flex-col">
+               {viewMode === "grid" ? parentGridStrip : parentListRow}
+               <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground select-none pointer-events-none">
+@@ -1578,6 +1578,12 @@ export function FileManagerGrid({
+                   );
+                 })}
+               </div>
++              {files.length === 0 && !createIntent && (
++                <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground select-none pointer-events-none">
++                  <Folder className="size-8 text-muted-foreground/30" />
++                  <span className="text-xs">{t("fileManager.emptyFolder")}</span>
++                </div>
++              )}
+             </div>
+           )}
+ 

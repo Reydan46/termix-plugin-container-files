@@ -1,0 +1,39 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 8705362..defff6b 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -303,6 +303,22 @@ export function FileManagerGrid({
+     counter: 0,
+   });
+ 
++  // A drag that ends or drops anywhere must not leave the upload hint behind.
++  useEffect(() => {
++    const reset = () =>
++      setDragState((prev) =>
++        prev.type === "external" || prev.type === "local"
++          ? { type: "none", files: [], counter: 0 }
++          : prev,
++      );
++    window.addEventListener("dragend", reset);
++    window.addEventListener("drop", reset);
++    return () => {
++      window.removeEventListener("dragend", reset);
++      window.removeEventListener("drop", reset);
++    };
++  }, []);
++
+   // Responsive column count for grid virtualization (matches Tailwind breakpoints roughly).
+   useEffect(() => {
+     if (viewMode !== "grid") return;
+@@ -575,6 +591,11 @@ export function FileManagerGrid({
+ 
+       const isInternalDrag = dragState.type === "internal";
+ 
++      // Only real file drags raise the upload hint: a workspace pane being
++      // dragged (or any other app-internal payload) must not.
++      const types = Array.from(e.dataTransfer.types ?? []);
++      if (!types.includes("Files") && !isLocalFilesDrag(e.dataTransfer)) return;
++
+       if (!isInternalDrag) {
+         const nextType = isLocalFilesDrag(e.dataTransfer)
+           ? "local"

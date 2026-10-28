@@ -1,0 +1,66 @@
+{
+  "id": "container-files",
+  "name": "Container Files",
+  "version": "1.0.0",
+  "description": "Browse, edit and transfer files in Docker and Podman containers over SSH.",
+  "author": {
+    "name": "Reydan46",
+    "url": "https://github.com/Reydan46"
+  },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/Reydan46/termix-plugin-container-files",
+  "docs": "https://github.com/Reydan46/termix-plugin-container-files/tree/main/docs",
+  "category": "Infrastructure",
+  "icon": "FolderArchive",
+  "features": [
+    "Browse the filesystem of Docker and Podman containers",
+    "Edit text files, manage permissions and standard file operations",
+    "Stream uploads and downloads between your computer and a container",
+    "Works with stopped and minimal containers where the engine allows it"
+  ],
+  "engine": {
+    "termix": ">=26.10.3",
+    "api": "^1.9"
+  },
+  "capabilities": [
+    "hosts:read",
+    "credentials:use",
+    "ssh:connect",
+    "network:serve",
+    "ui:surface",
+    "desktop:local"
+  ],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "container-files",
+        "titleKey": "nav.containerFiles",
+        "icon": "FolderArchive",
+        "openFrom": ["host-context-menu", "palette"]
+      }
+    ],
+    "permissions": [
+      {
+        "name": "use",
+        "titleKey": "permissions.use.title",
+        "descriptionKey": "permissions.use.description",
+        "defaultRoles": ["admin", "user"]
+      }
+    ],
+    "settings": {
+      "user": [
+        {
+          "key": "transferConcurrency",
+          "type": "number",
+          "labelKey": "settings.user.transferConcurrency.label",
+          "descriptionKey": "settings.user.transferConcurrency.description",
+          "min": 1,
+          "max": 4,
+          "default": 2
+        }
+      ]
+    }
+  },
+  "locales": "locales",
+  "platforms": ["linux", "win32", "darwin"]
+}

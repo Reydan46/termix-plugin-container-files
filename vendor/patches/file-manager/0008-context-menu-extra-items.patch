@@ -1,0 +1,66 @@
+diff --git a/FileManagerContextMenu.tsx b/FileManagerContextMenu.tsx
+index b2da396..c2a7550 100644
+--- a/FileManagerContextMenu.tsx
++++ b/FileManagerContextMenu.tsx
+@@ -72,6 +72,15 @@ interface ContextMenuProps {
+   onCopyPath?: (files: FileItem[]) => void;
+   onCopyFolderLink?: (path: string) => void;
+   onTransferToHost?: (files: FileItem[], move: boolean) => void;
++  /** Host-supplied entries, placed before Properties / after "New file". */
++  extraItems?: ExtraMenuItem[];
++}
++
++export interface ExtraMenuItem {
++  icon?: React.ReactNode;
++  label: string;
++  action: () => void;
++  disabled?: boolean;
+ }
+ 
+ interface MenuItem {
+@@ -117,6 +126,7 @@ export function FileManagerContextMenu({
+   onCopyPath,
+   onCopyFolderLink,
+   onTransferToHost,
++  extraItems,
+ }: ContextMenuProps) {
+   const { t } = useTranslation();
+   const menuRef = useRef<HTMLDivElement>(null);
+@@ -430,6 +440,18 @@ export function FileManagerContextMenu({
+       menuItems.push({ separator: true } as MenuItem);
+     }
+ 
++    if (extraItems?.length) {
++      for (const item of extraItems) {
++        menuItems.push({
++          icon: item.icon ?? <Link className="size-3.5" />,
++          label: item.label,
++          action: item.action,
++          disabled: item.disabled,
++        });
++      }
++      menuItems.push({ separator: true } as MenuItem);
++    }
++
+     if (isSingleFile && onProperties) {
+       menuItems.push({
+         icon: <Info className="size-3.5" />,
+@@ -498,6 +520,18 @@ export function FileManagerContextMenu({
+       menuItems.push({ separator: true } as MenuItem);
+     }
+ 
++    if (extraItems?.length) {
++      for (const item of extraItems) {
++        menuItems.push({
++          icon: item.icon ?? <Link className="size-3.5" />,
++          label: item.label,
++          action: item.action,
++          disabled: item.disabled,
++        });
++      }
++      menuItems.push({ separator: true } as MenuItem);
++    }
++
+     if (onRefresh) {
+       menuItems.push({
+         icon: <RefreshCw className="size-3.5" />,

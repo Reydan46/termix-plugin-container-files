@@ -1,0 +1,13 @@
+diff --git a/LocalFilePane.tsx b/LocalFilePane.tsx
+index 5da1b49..78aa62a 100644
+--- a/LocalFilePane.tsx
++++ b/LocalFilePane.tsx
+@@ -40,7 +40,7 @@ import {
+   trashLocalPaths,
+ } from "./lib/local-files";
+ import { copyToClipboard } from "@termix-ssh/plugin-sdk/ui";
+-import { useConfirm } from "@termix-ssh/plugin-sdk/ui";
++import { useConfirm } from "../../popup/useConfirm";
+ import { LocalFileContextMenu } from "./LocalFileContextMenu.tsx";
+ import {
+   useResizableColumns,

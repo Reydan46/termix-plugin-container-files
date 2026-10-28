@@ -1,0 +1,13 @@
+diff --git a/components/CompressDialog.tsx b/components/CompressDialog.tsx
+index 7883be9..4f6308f 100644
+--- a/components/CompressDialog.tsx
++++ b/components/CompressDialog.tsx
+@@ -58,7 +58,7 @@ export function CompressDialog({
+     onOpenChange(false);
+   };
+ 
+-  const formats = ["zip", "tar.gz", "tar.bz2", "tar.xz", "tar", "7z"] as const;
++  const formats = ["zip", "tar.gz", "tar"] as const;
+ 
+   return (
+     <InlineView

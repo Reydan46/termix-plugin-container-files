@@ -1,0 +1,80 @@
+diff --git a/components/ColumnResizeHandle.tsx b/components/ColumnResizeHandle.tsx
+index 0e25d78..70b3ec5 100644
+--- a/components/ColumnResizeHandle.tsx
++++ b/components/ColumnResizeHandle.tsx
+@@ -10,7 +10,7 @@ interface ColumnResizeHandleProps {
+ }
+ 
+ /**
+- * Thin grab area on the left edge of a list-view header cell. The parent cell
++ * Thin grab area just inside the left edge of a list-view header cell. The parent cell
+  * must be `relative`. Shows a hairline on hover and while dragging.
+  */
+ export function ColumnResizeHandle({
+@@ -25,14 +25,16 @@ export function ColumnResizeHandle({
+       title={title}
+       data-column-resize-handle
+       data-resizing={resizing}
++      draggable={false}
++      onDragStart={(event) => event.preventDefault()}
+       className={cn(
+-        "absolute -left-2 top-0 bottom-0 w-3 cursor-col-resize group/handle z-10",
++        "absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize select-none group/handle z-10",
+       )}
+       {...handlers}
+     >
+       <div
+         className={cn(
+-          "absolute left-1/2 top-0.5 bottom-0.5 w-px -translate-x-1/2 transition-colors",
++          "pointer-events-none absolute left-0 top-0.5 bottom-0.5 w-px transition-colors",
+           resizing
+             ? "bg-accent-brand"
+             : "bg-transparent group-hover/handle:bg-accent-brand/60",
+diff --git a/hooks/useResizableColumns.ts b/hooks/useResizableColumns.ts
+index 01a38a1..51f1bc4 100644
+--- a/hooks/useResizableColumns.ts
++++ b/hooks/useResizableColumns.ts
+@@ -1,5 +1,6 @@
+ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import type React from "react";
++import { dragWithOverlay } from "../../../popup/dragOverlay";
+ 
+ export interface ResizableColumnSpec {
+   /** Stable key, also used for persistence. */
+@@ -158,19 +159,15 @@ export function useResizableColumns({
+       const startWidth = widthsRef.current[key];
+       setResizingKey(key);
+ 
+-      const onMove = (e: MouseEvent) => {
++      const onMove = (x: number) => {
+         // The handle sits on the column's left edge, so dragging right
+         // narrows the column and dragging left widens it.
+-        const next = clamp(startWidth - (e.clientX - startX), column);
++        const next = clamp(startWidth - (x - startX), column);
+         if (next !== widthsRef.current[key]) {
+           setWidths((prev) => ({ ...prev, [key]: next }));
+         }
+       };
+       const onUp = () => {
+-        document.removeEventListener("mousemove", onMove);
+-        document.removeEventListener("mouseup", onUp);
+-        document.body.style.cursor = "";
+-        document.body.style.userSelect = "";
+         setResizingKey(null);
+         persist(widthsRef.current);
+ 
+@@ -189,10 +186,10 @@ export function useResizableColumns({
+         );
+       };
+ 
+-      document.body.style.cursor = "col-resize";
+-      document.body.style.userSelect = "none";
+-      document.addEventListener("mousemove", onMove);
+-      document.addEventListener("mouseup", onUp);
++      // A transparent full-screen overlay owns the cursor for the whole drag:
++      // the handle moves under the pointer as the column grows, and without
++      // the overlay the cursor flips between it and the cells around it.
++      dragWithOverlay("ew-resize", onMove, onUp);
+     },
+     [columns, persist],
+   );

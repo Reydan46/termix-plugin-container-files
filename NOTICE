@@ -1,0 +1,16 @@
+Container Files is licensed under the Apache License 2.0, see LICENSE.
+
+It bundles the following third-party material.
+
+Termix Plugin-File-Manager (https://github.com/Termix-SSH/Plugin-File-Manager)
+-------------------------------------------------------------------------------
+
+The file manager user interface in src/frontend/vendor/file-manager/ is copied
+from Plugin-File-Manager, Apache License 2.0. The files are kept identical to
+the upstream commit recorded in vendor/UPSTREAM.lock.json. Our changes are
+the numbered patches in vendor/patches/file-manager/ and the adapter modules in
+src/frontend/vendor/file-manager/api/.
+
+Other runtime dependencies (React components, CodeMirror, xterm.js, pdf.js,
+JSZip, tar-stream and others) are listed in package.json and keep their own
+licenses.
