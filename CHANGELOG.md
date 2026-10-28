@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+### Fixed
+
+- Connection and download error messages in the file window are translated instead of always shown in English.
+
 ## 1.0.0
 
 ### Added

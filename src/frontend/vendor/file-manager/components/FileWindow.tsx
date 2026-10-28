@@ -223,11 +223,15 @@ export function FileWindow({
           err.message?.includes("established")
         ) {
           toast.error(
-            `SSH connection failed. Please check your connection to ${sshHost.name} (${sshHost.ip}:${sshHost.port})`,
+            t("fileManager.sshConnectionFailed", {
+              name: sshHost.name,
+              ip: sshHost.ip,
+              port: sshHost.port,
+            }),
           );
         } else {
           const errorMessage =
-            errorData?.error || err.message || "Unknown error";
+            errorData?.error || err.message || t("fileManager.unknownError");
           const isFileNotFound =
             err.isFileNotFound ||
             errorData?.fileNotFound ||
@@ -431,11 +435,15 @@ export function FileWindow({
         err.message?.includes("established")
       ) {
         toast.error(
-          `SSH connection failed. Please check your connection to ${sshHost.name} (${sshHost.ip}:${sshHost.port})`,
+          t("fileManager.sshConnectionFailed", {
+            name: sshHost.name,
+            ip: sshHost.ip,
+            port: sshHost.port,
+          }),
         );
       } else {
         toast.error(
-          `Failed to download file: ${err.message || "Unknown error"}`,
+          `${t("fileManager.failedToDownloadFile")}: ${err.message || t("fileManager.unknownError")}`,
         );
       }
     } finally {
