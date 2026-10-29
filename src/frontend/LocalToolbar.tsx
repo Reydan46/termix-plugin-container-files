@@ -6,6 +6,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  ClipboardPaste,
+  Files,
+  Scissors,
   Download,
   Eye,
   EyeOff,
@@ -99,6 +102,10 @@ interface Props {
   selectedCount: number;
   onDeleteSelected: () => void;
   onCopySelected: () => void;
+  /** Workspace clipboard (Desktop); absent hides the buttons. */
+  onClipCopy?: () => void;
+  onClipCut?: () => void;
+  onClipPaste?: () => void;
   onUploadSelected?: () => void;
   search: string;
   onSearch: (value: string) => void;
@@ -537,16 +544,49 @@ export function LocalToolbar(props: Props): React.ReactElement {
               >
                 <Trash2 className="size-3.5" />
               </Button>
+              {props.onClipCopy && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  title={t("fileManager.copy")}
+                  className="text-accent-brand hover:bg-accent-brand/20"
+                  onClick={props.onClipCopy}
+                >
+                  <Files className="size-3.5" />
+                </Button>
+              )}
+              {props.onClipCut && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  title={t("fileManager.cut")}
+                  className="text-accent-brand hover:bg-accent-brand/20"
+                  onClick={props.onClipCut}
+                >
+                  <Scissors className="size-3.5" />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon-xs"
-                title={t("fileManager.copy")}
+                title={t("fileManager.copyPath")}
                 className="text-accent-brand hover:bg-accent-brand/20"
                 onClick={props.onCopySelected}
               >
                 <Copy className="size-3.5" />
               </Button>
             </div>
+          )}
+
+          {props.onClipPaste && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              title={t("fileManager.paste")}
+              onClick={props.onClipPaste}
+            >
+              <ClipboardPaste className="size-3.5" />
+            </Button>
           )}
 
           <PanelSearch

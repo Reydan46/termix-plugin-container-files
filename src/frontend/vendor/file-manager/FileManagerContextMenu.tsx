@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { Kbd, KbdKey, KbdSeparator } from "@termix-ssh/plugin-sdk/ui";
+import { isExtractableArchive } from "../../archivePath";
 
 const VIEWPORT_PADDING = 16;
 
@@ -300,19 +301,7 @@ export function FileManagerContextMenu({
 
     if (isSingleFile && files[0].type === "file" && onExtractArchive) {
       const fileName = files[0].name.toLowerCase();
-      const isArchive =
-        fileName.endsWith(".zip") ||
-        fileName.endsWith(".tar") ||
-        fileName.endsWith(".tar.gz") ||
-        fileName.endsWith(".tgz") ||
-        fileName.endsWith(".tar.bz2") ||
-        fileName.endsWith(".tbz2") ||
-        fileName.endsWith(".tar.xz") ||
-        fileName.endsWith(".gz") ||
-        fileName.endsWith(".bz2") ||
-        fileName.endsWith(".xz") ||
-        fileName.endsWith(".7z") ||
-        fileName.endsWith(".rar");
+      const isArchive = isExtractableArchive(fileName);
 
       if (isArchive) {
         menuItems.push({

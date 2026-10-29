@@ -13,12 +13,6 @@ export const TERMINAL_SHELLS = [
   "ksh",
 ] as const;
 
-/**
- * A shell name from the list above, "auto", or an absolute path inside the
- * container (for example /usr/local/bin/fish).
- */
-export type TerminalShell = string;
-
 const SHELL_RE = /^[a-z][a-z0-9]{1,7}$/;
 // Absolute path built from plain path characters only: no spaces, quotes, "~",
 // "$", backticks, globs or other shell syntax. It is quoted as well.

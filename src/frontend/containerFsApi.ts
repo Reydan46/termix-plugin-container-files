@@ -3,7 +3,14 @@
 // string is a target key: "<sshSessionId>|<containerId>".
 
 import { getApp } from "./app";
+import type { MountInfo } from "./mountLookup";
 import { isVirtualPath, parseVirtualPath, virtualPath } from "./archivePath";
+import {
+  originOfSession,
+  originPrefix,
+  via,
+  type Origin,
+} from "./sessionOrigin";
 import type {
   FileItem,
   FileListMeta,
@@ -48,10 +55,35 @@ interface AxiosLike {
   };
 }
 
+/**
+ * Every 404 this plugin sends carries a `code`; one without it came from the
+ * host for a route the installed plugin does not have, which means the plugin
+ * on that server is older than this client (fs/du, append, mounts...).
+ */
+export function isMissingRoute(
+  status: number | undefined,
+  code: string | undefined,
+): boolean {
+  return status === 404 && !code;
+}
+
+export const SERVER_OLDER_CODE = "SERVER_OLDER";
+
+function olderServerError(status: number, data?: Record<string, unknown>) {
+  return new ContainerApiError(
+    getApp().t("containerFiles.serverOlder"),
+    status,
+    SERVER_OLDER_CODE,
+    data,
+  );
+}
+
 export function toApiError(error: unknown, action: string): ContainerApiError {
   if (error instanceof ContainerApiError) return error;
   const e = error as AxiosLike;
   const data = e?.response?.data;
+  if (isMissingRoute(e?.response?.status, data?.code))
+    return olderServerError(404, data);
   const message =
     data?.error ||
     data?.message ||
@@ -69,9 +101,11 @@ async function call<T>(action: string, run: () => Promise<{ data: T }>) {
 
 const enc = encodeURIComponent;
 
+// Every route is built with via(): a remote session's calls go through the
+// local backend's /remote proxy.
 function base(key: string): string {
   const { sessionId, containerId } = parseTarget(key);
-  return `/containers/${enc(sessionId)}/${enc(containerId)}`;
+  return via(key, `/containers/${enc(sessionId)}/${enc(containerId)}`);
 }
 
 // ---- session ------------------------------------------------------------
@@ -85,23 +119,32 @@ export interface Credentials {
 export const sessionApi = {
   connect: (sessionId: string, hostId: number, credentials?: Credentials) =>
     call<ConnectResult>("connect", () =>
-      getApp().api.post("/ssh/connect", { sessionId, hostId, ...credentials }),
+      getApp().api.post(via(sessionId, "/ssh/connect"), {
+        sessionId,
+        hostId,
+        ...credentials,
+      }),
     ),
   answerTotp: (sessionId: string, totpCode: string) =>
     call<ConnectResult>("verify the code", () =>
-      getApp().api.post("/ssh/connect-totp", { sessionId, totpCode }),
+      getApp().api.post(via(sessionId, "/ssh/connect-totp"), {
+        sessionId,
+        totpCode,
+      }),
     ),
   continueBrowserSignIn: (sessionId: string) =>
     call<ConnectResult>("continue after a browser sign-in", () =>
-      getApp().api.post("/ssh/connect-browser-sign-in", { sessionId }),
+      getApp().api.post(via(sessionId, "/ssh/connect-browser-sign-in"), {
+        sessionId,
+      }),
     ),
   disconnect: (sessionId: string) =>
     call("disconnect", () =>
-      getApp().api.post("/ssh/disconnect", { sessionId }),
+      getApp().api.post(via(sessionId, "/ssh/disconnect"), { sessionId }),
     ),
   keepalive: (sessionId: string) =>
     call("keep the session alive", () =>
-      getApp().api.post("/ssh/keepalive", { sessionId }),
+      getApp().api.post(via(sessionId, "/ssh/keepalive"), { sessionId }),
     ),
   status: (sessionId: string) =>
     call<{
@@ -109,12 +152,14 @@ export const sessionApi = {
       runtime?: "docker" | "podman";
       runtimeVersion?: string | null;
     }>("get the status", () =>
-      getApp().api.get("/ssh/status", { params: { sessionId } }),
+      getApp().api.get(via(sessionId, "/ssh/status"), {
+        params: { sessionId },
+      }),
     ),
   containers: (sessionId: string) =>
     call<{ runtime: "docker" | "podman"; containers: ContainerInfo[] }>(
       "list containers",
-      () => getApp().api.get(`/containers/${enc(sessionId)}`),
+      () => getApp().api.get(via(sessionId, `/containers/${enc(sessionId)}`)),
     ),
   capabilities: (key: string) =>
     call<Capabilities>("probe the container", () =>
@@ -173,6 +218,22 @@ export async function fetchShells(key: string): Promise<ContainerShells> {
   } catch (error) {
     if (error instanceof ContainerApiError && error.status === 404)
       return { shells: [], default: null };
+    throw error;
+  }
+}
+
+/** Mounts of the container; a missing route counts as "none". */
+export async function fetchMounts(
+  key: string,
+  signal?: AbortSignal,
+): Promise<MountInfo[]> {
+  try {
+    const data = await call<{ mounts?: MountInfo[] }>("list mounts", () =>
+      getApp().api.get(`${base(key)}/mounts`, { signal }),
+    );
+    return Array.isArray(data.mounts) ? data.mounts : [];
+  } catch (error) {
+    if (error instanceof ContainerApiError && error.status === 404) return [];
     throw error;
   }
 }
@@ -353,6 +414,8 @@ export async function responseError(
   } catch {
     // not JSON
   }
+  if (isMissingRoute(response.status, data?.code as string | undefined))
+    return olderServerError(response.status, data);
   const message =
     (data?.error as string) ||
     (data?.message as string) ||
@@ -389,6 +452,20 @@ function op<T = Record<string, unknown>>(
   return call<T>(name, () =>
     getApp().api.post(`${base(key)}/fs/${name}`, body, { signal }),
   );
+}
+
+/** A top level name an extraction creates. */
+export interface ExtractPlanItem {
+  name: string;
+  isDirectory: boolean;
+}
+
+/** The answers of the conflict window: names to leave out, and name -> new name. */
+export interface ExtractChoices {
+  skip: string[];
+  renames: Record<string, string>;
+  /** Existing names the user chose to replace; others are never overwritten. */
+  replace: string[];
 }
 
 /** What a recursive chmod/chown touches. */
@@ -434,18 +511,49 @@ export const fsApi = {
       { dir, names, out, format, opId: track.opId },
       track.signal,
     ),
+  append: (
+    key: string,
+    archive: string,
+    dir: string,
+    names: string[],
+    track: OpTrack = {},
+  ) =>
+    op(key, "append", { archive, dir, names, opId: track.opId }, track.signal),
+  archiveDelete: (
+    key: string,
+    archive: string,
+    entries: string[],
+    track: OpTrack = {},
+  ) =>
+    op(
+      key,
+      "archive-delete",
+      { archive, entries, opId: track.opId },
+      track.signal,
+    ),
   extract: (
     key: string,
     archive: string,
     dest: string,
     overwrite = false,
     track: OpTrack = {},
+    choices?: ExtractChoices,
   ) =>
     op(
       key,
       "extract",
-      { archive, dest, overwrite, opId: track.opId },
+      { archive, dest, overwrite, opId: track.opId, ...choices },
       track.signal,
+    ),
+  /**
+   * The top level names an extraction creates (all of the archive, or just
+   * `entries`). An older server answers with SERVER_OLDER_CODE.
+   */
+  extractPlan: (key: string, archive: string, entries?: string[]) =>
+    call<{ items: ExtractPlanItem[]; truncated?: boolean }>(
+      "plan the extraction",
+      () =>
+        getApp().api.post(`${base(key)}/fs/extract-plan`, { archive, entries }),
     ),
   /** Extracts chosen entries (archive-inner paths) into `dest`. */
   extractEntries: (
@@ -455,6 +563,7 @@ export const fsApi = {
     dest: string,
     overwrite = false,
     track: OpTrack = {},
+    choices?: ExtractChoices,
   ) => {
     assertWritable(dest);
     return call<{ ok: boolean }>("extract entries", () =>
@@ -466,6 +575,7 @@ export const fsApi = {
           dest,
           overwrite,
           opId: track.opId,
+          ...choices,
         },
         { signal: track.signal },
       ),
@@ -569,10 +679,6 @@ export function downloadFallbackName(
   return (
     (path.split("/").pop() || "download") + (kind === "directory" ? ".tar" : "")
   );
-}
-
-export function responseFileName(response: Response): string | null {
-  return dispositionName(response.headers.get("content-disposition"));
 }
 
 export async function downloadBlob(
@@ -696,18 +802,23 @@ export interface TransferStatus {
   error?: string;
 }
 
+/** `origin` is where the transfer runs: "local" also for this-computer halves. */
 export function transferStatus(
   transferId: string,
+  origin: Origin,
 ): Promise<TransferStatus | null> {
   return getApp()
-    .api.get(`/transfers/${enc(transferId)}`)
+    .api.get(`${originPrefix(origin)}/transfers/${enc(transferId)}`)
     .then((r: { data: TransferStatus }) => r.data)
     .catch(() => null);
 }
 
-export function cancelTransfer(transferId: string): Promise<unknown> {
+export function cancelTransfer(
+  transferId: string,
+  origin: Origin,
+): Promise<unknown> {
   return getApp()
-    .api.post(`/transfers/${enc(transferId)}/cancel`, {})
+    .api.post(`${originPrefix(origin)}/transfers/${enc(transferId)}/cancel`, {})
     .catch(() => undefined);
 }
 
@@ -732,9 +843,17 @@ export function copyBetween(
     isVirtualPath(body.to.dir) ||
     body.from.paths.some((path) => isVirtualPath(path))
   )
-    return Promise.reject(new Error("Archives are read-only"));
+    return Promise.reject(
+      new Error(getApp().t("containerFiles.archiveReadOnly")),
+    );
   return call("copy between containers", () =>
-    getApp().api.post(`/containers/${enc(sessionId)}/copy`, body, { signal }),
+    getApp().api.post(
+      via(sessionId, `/containers/${enc(sessionId)}/copy`),
+      body,
+      {
+        signal,
+      },
+    ),
   );
 }
 
@@ -758,18 +877,24 @@ export interface LocalDownloadBody {
   skip?: string[];
 }
 
-/** Desktop only: uploads files and folders of the user's computer. */
+/**
+ * Desktop only: uploads files and folders of the user's computer. The call
+ * always goes to this device's backend; for a session on the server it moves
+ * the container half through the link (`origin: "remote"`).
+ */
 export function localUpload(
   sessionId: string,
   body: LocalUploadBody,
   signal?: AbortSignal,
 ): Promise<{ success: boolean; bytes?: number }> {
   if (isVirtualPath(body.dir))
-    return Promise.reject(new Error("Archives are read-only"));
+    return Promise.reject(
+      new Error(getApp().t("containerFiles.archiveReadOnly")),
+    );
   return call("upload from this computer", () =>
     getApp().api.post(
       "/local/transfer/upload",
-      { sessionId, ...body },
+      { sessionId, ...body, origin: originOfSession(sessionId) },
       { signal },
     ),
   );
@@ -789,11 +914,13 @@ export function localDownload(
   bytesWritten?: number;
 }> {
   if (body.paths.some((path) => isVirtualPath(path)))
-    return Promise.reject(new Error("Archives are read-only"));
+    return Promise.reject(
+      new Error(getApp().t("containerFiles.archiveReadOnly")),
+    );
   return call("download to this computer", () =>
     getApp().api.post(
       "/local/transfer/download",
-      { sessionId, ...body },
+      { sessionId, ...body, origin: originOfSession(sessionId) },
       { signal },
     ),
   );
@@ -802,15 +929,24 @@ export function localDownload(
 /** What the backend reports for a running compress / extract. */
 export interface OpStatus {
   status: "running" | "done" | "error" | "cancelled";
-  stage: "preparing" | "scanning" | "packing" | "extracting" | "finishing";
+  stage:
+    | "preparing"
+    | "scanning"
+    | "packing"
+    | "extracting"
+    | "rewriting"
+    | "finishing";
   processedBytes?: number;
   totalBytes?: number;
   approximate?: boolean;
 }
 
-export function operationStatus(opId: string): Promise<OpStatus | null> {
+export function operationStatus(
+  opId: string,
+  origin: Origin,
+): Promise<OpStatus | null> {
   return getApp()
-    .api.get(`/operations/${enc(opId)}`)
+    .api.get(`${originPrefix(origin)}/operations/${enc(opId)}`)
     .then((r: { data: OpStatus }) => r.data)
     .catch(() => null);
 }

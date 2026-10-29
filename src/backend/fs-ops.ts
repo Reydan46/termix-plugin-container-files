@@ -10,6 +10,16 @@ import {
 } from "./fs-list.js";
 import { execScriptCommand } from "./shell-quote.js";
 import {
+  archiveKind,
+  extractTools,
+  lowerName,
+  missingGroup,
+  PICK_FN,
+  RAR_TOOLS,
+  SEVENZ_TOOLS,
+  ZIP_PATTERN,
+} from "./archive-kinds.js";
+import {
   parseDuKb,
   parseUnzipTotal,
   parseWcBytes,
@@ -430,10 +440,83 @@ async function startExtractProgress(
 }
 
 /**
+ * The names an archive would create directly in the destination, one per line
+ * (the first path part of every entry); a single compressed file yields its
+ * own name without the compression extension.
+ */
+const EXTRACT_LIST_FN = `list() {
+  case "$k" in
+    ${ZIP_PATTERN})
+      if command -v unzip >/dev/null 2>&1; then unzip -Z1 "$1"; else bsdtar -tf "$1"; fi ;;
+    *.tar.gz|*.tgz) tar -tzf "$1" ;;
+    *.tar.bz2|*.tbz2|*.tbz) tar -tjf "$1" ;;
+    *.tar.xz|*.txz) tar -tJf "$1" ;;
+    *.tar.zst|*.tzst) zstd -dc -- "$1" | tar -tf - ;;
+    *.7z)
+      if s=$(pick ${SEVENZ_TOOLS.join(" ")}); then "$s" l -slt -ba -- "$1" </dev/null | sed -n 's/^Path = //p'
+      else bsdtar -tf "$1"; fi ;;
+    *.rar)
+      if s=$(pick ${RAR_TOOLS.join(" ")}); then
+        if [ "$s" = unrar ]; then unrar lb -p- -- "$1" </dev/null
+        else "$s" l -slt -ba -- "$1" </dev/null | sed -n 's/^Path = //p'; fi
+      else bsdtar -tf "$1"; fi ;;
+    *.gz|*.bz2|*.xz|*.zst) b=\${1##*/}; printf '%s\\n' "\${b%.*}" ;;
+    *) tar -tf "$1" ;;
+  esac
+}`;
+
+// $1 archive, $2 destination, $3 overwrite.
+const EXTRACT_SCRIPT = `mkdir -p -- "$2" || exit 1
+${PICK_FN}
+${lowerName("$1")}
+${EXTRACT_LIST_FN}
+if [ "$3" != 1 ]; then
+  c=$(list "$1" 2>/dev/null | while IFS= read -r n; do
+    n=\${n#./}; n=\${n%%/*}
+    if [ -n "$n" ] && { [ -e "$2/$n" ] || [ -L "$2/$n" ]; }; then echo "$n"; break; fi
+  done)
+  if [ -n "$c" ]; then echo "$c" >&2; exit ${EXIT_EXISTS}; fi
+fi
+case "$k" in
+  ${ZIP_PATTERN})
+    if command -v unzip >/dev/null 2>&1; then unzip -o -q "$1" -d "$2"
+    else bsdtar -xf "$1" -C "$2"; fi ;;
+  *.tar.gz|*.tgz) tar -xzf "$1" -C "$2" ;;
+  *.tar.bz2|*.tbz2|*.tbz) tar -xjf "$1" -C "$2" ;;
+  *.tar.xz|*.txz) tar -xJf "$1" -C "$2" ;;
+  *.tar.zst|*.tzst) zstd -dc -- "$1" | tar -xf - -C "$2" ;;
+  *.7z)
+    if s=$(pick ${SEVENZ_TOOLS.join(" ")}); then "$s" x -y -o"$2" -- "$1" </dev/null >/dev/null
+    else bsdtar -xf "$1" -C "$2"; fi ;;
+  *.rar)
+    if s=$(pick ${RAR_TOOLS.join(" ")}); then
+      if [ "$s" = unrar ]; then unrar x -y -o+ -p- -idq -- "$1" "$2/" </dev/null
+      else "$s" x -y -o"$2" -- "$1" </dev/null >/dev/null; fi
+    else bsdtar -xf "$1" -C "$2"; fi ;;
+  *.gz|*.bz2|*.xz|*.zst)
+    b=\${1##*/}; o=\${b%.*}
+    if [ -z "$o" ]; then echo "$b: cannot name the extracted file" >&2; exit 1; fi
+    if [ -d "$2/$o" ] && [ ! -L "$2/$o" ]; then echo "$o" >&2; exit ${EXIT_EXISTS}; fi
+    p=$(mktemp "$2/.extract.XXXXXX") || exit 1
+    trap 'rm -f -- "$p"' EXIT
+    case "$k" in
+      *.gz) gzip -dc -- "$1" ;;
+      *.bz2) bzip2 -dc -- "$1" ;;
+      *.xz) xz -dc -- "$1" ;;
+      *) zstd -dc -- "$1" ;;
+    esac > "$p" || exit $?
+    m=$(stat -c %a -- "$1" 2>/dev/null)
+    if [ -n "$m" ]; then chmod "$m" -- "$p" 2>/dev/null; fi
+    mv -f -- "$p" "$2/$o" ;;
+  *) tar -xf "$1" -C "$2" ;;
+esac`;
+
+/**
  * Extracts an archive into `dest` (created when missing). Without `overwrite`
  * it fails with EXISTS when a top-level entry of the archive is already there.
- * (Archives are listed with `unzip -Z1` / `tar -t`; where the tool can't list,
- * the check is skipped.)
+ * (Archives are listed with `unzip -Z1` / `tar -t` / `7z l`; where the tool
+ * can't list, the check is skipped.) Besides zip and tar this unpacks 7z, rar
+ * and single compressed files (.gz, .bz2, .xz, .zst).
  */
 export async function extract(
   t: ListTarget,
@@ -442,18 +525,19 @@ export async function extract(
   overwrite = false,
   o: OpOptions = {},
 ): Promise<void> {
-  const lower = archive.toLowerCase();
-  const tool = lower.endsWith(".zip") ? "unzip" : "tar";
-  if (!/\.(zip|tar|tgz|tar\.gz|tar\.bz2|tbz2|tar\.xz|txz)$/.test(lower)) {
-    throw new HttpError(400, "Unsupported archive type");
-  }
-  if (!t.capabilities.tools.includes(tool)) {
+  const kind = archiveKind(archive);
+  if (!kind) throw new HttpError(400, "Unsupported archive type");
+  const missing = missingGroup(t.capabilities.tools, extractTools(kind));
+  if (missing) {
     throw new HttpError(
       501,
-      `${tool} is not installed in this container`,
+      `${missing.label} is not installed in this container`,
       "NO_TOOL",
+      { tool: missing.label },
     );
   }
+  const tool =
+    kind === "zip" && t.capabilities.tools.includes("unzip") ? "unzip" : "";
   const progress = o.progress;
   let stopWatching: (() => void) | undefined;
   try {
@@ -467,35 +551,7 @@ export async function extract(
         o,
       );
     }
-    await run(
-      t,
-      `mkdir -p -- "$2" || exit 1
-list() {
-  case "$1" in
-    *.zip|*.ZIP) unzip -Z1 "$1" ;;
-    *.tar.gz|*.tgz) tar -tzf "$1" ;;
-    *.tar.bz2|*.tbz2) tar -tjf "$1" ;;
-    *.tar.xz|*.txz) tar -tJf "$1" ;;
-    *) tar -tf "$1" ;;
-  esac
-}
-if [ "$3" != 1 ]; then
-  c=$(list "$1" 2>/dev/null | while IFS= read -r n; do
-    n=\${n#./}; n=\${n%%/*}
-    if [ -n "$n" ] && { [ -e "$2/$n" ] || [ -L "$2/$n" ]; }; then echo "$n"; break; fi
-  done)
-  if [ -n "$c" ]; then echo "$c" >&2; exit ${EXIT_EXISTS}; fi
-fi
-case "$1" in
-  *.zip|*.ZIP) unzip -o -q "$1" -d "$2" ;;
-  *.tar.gz|*.tgz) tar -xzf "$1" -C "$2" ;;
-  *.tar.bz2|*.tbz2) tar -xjf "$1" -C "$2" ;;
-  *.tar.xz|*.txz) tar -xJf "$1" -C "$2" ;;
-  *) tar -xf "$1" -C "$2" ;;
-esac`,
-      [archive, dest, overwrite ? "1" : "0"],
-      o,
-    );
+    await run(t, EXTRACT_SCRIPT, [archive, dest, overwrite ? "1" : "0"], o);
     progress?.setStage("finishing");
   } finally {
     stopWatching?.();

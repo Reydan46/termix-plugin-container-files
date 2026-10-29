@@ -1,4 +1,5 @@
 import React from "react";
+import { DIALOG_DEFAULT } from "./popup/useDialogKeys";
 import { Checkbox, Input } from "@termix-ssh/plugin-sdk/ui";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { usePopupWindow } from "./popup/PopupContext";
@@ -188,6 +189,7 @@ export function SymlinkWindow({
         </button>
         <button
           type="submit"
+          {...DIALOG_DEFAULT}
           disabled={!valid || saving}
           className={POPUP_BUTTON_PRIMARY}
         >

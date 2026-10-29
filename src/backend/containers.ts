@@ -163,4 +163,5 @@ export function invalidateContainerState(
   containerId: string,
 ): void {
   session.states.delete(containerId);
+  session.mounts.delete(containerId);
 }

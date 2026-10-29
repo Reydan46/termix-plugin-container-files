@@ -1,0 +1,54 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 2778e04..05702e2 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -29,6 +29,7 @@ import {
+   ArrowDown,
+   FileSymlink,
+   Move,
++  Ban,
+   GitCompare,
+ } from "lucide-react";
+ import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+@@ -147,6 +148,8 @@ interface FileManagerGridProps {
+   mountMark?: (file: FileItem) => MountMark | null;
+   /** Hint text when dropping `dragged` on the file `target` does something (null: nothing). */
+   fileDropHint?: (dragged: FileItem[], target: FileItem) => string | null;
++  /** Why dropping `dragged` on the file `target` is refused (null: not refused): forbidden cursor and the reason in the drag hint. */
++  fileDropBlock?: (dragged: FileItem[], target: FileItem) => string | null;
+   /** Called instead of the diff when `fileDropHint` accepted the drop. */
+   onDropOnFile?: (dragged: FileItem[], target: FileItem) => void;
+ }
+@@ -308,6 +311,7 @@ export function FileManagerGrid({
+   scrollResetKey,
+   mountMark,
+   fileDropHint,
++  fileDropBlock,
+   onDropOnFile,
+ }: FileManagerGridProps) {
+   const { t } = useTranslation();
+@@ -518,7 +522,9 @@ export function FileManagerGrid({
+       !dragState.files.some((f) => f.path === targetFile.path)
+     ) {
+       setDragState((prev) => ({ ...prev, target: targetFile }));
+-      e.dataTransfer.dropEffect = "move";
++      e.dataTransfer.dropEffect = fileDropBlock?.(dragState.files, targetFile)
++        ? "none"
++        : "move";
+     } else if (isLocalFilesDrag(e.dataTransfer)) {
+       e.dataTransfer.dropEffect = "copy";
+       const nextTarget =
+@@ -1759,6 +1765,13 @@ export function FileManagerGrid({
+                         })}
+                       </span>
+                     </>
++                  ) : fileDropBlock?.(files, dragState.target) ? (
++                    <>
++                      <Ban className="size-3.5 text-destructive" />
++                      <span className="max-w-xs text-[10px] font-bold uppercase tracking-widest text-foreground">
++                        {fileDropBlock(files, dragState.target)}
++                      </span>
++                    </>
+                   ) : fileDropHint?.(files, dragState.target) ? (
+                     <>
+                       <Move className="size-3.5 text-accent-brand" />

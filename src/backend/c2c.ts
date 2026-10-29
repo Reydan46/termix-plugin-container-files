@@ -108,6 +108,7 @@ export async function relayCopy(
     );
     const onAbort = () => source.close();
     signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
     try {
       await cpUpload(
         dst,

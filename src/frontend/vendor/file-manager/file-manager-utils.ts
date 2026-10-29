@@ -1,3 +1,5 @@
+import { getApp } from "../../app";
+
 export function formatFileSize(bytes?: number): string {
   if (bytes === undefined || bytes === null) return "-";
   if (bytes === 0) return "0 B";
@@ -100,12 +102,12 @@ export async function trashInBatches<T>(
         } else if (error !== CANCELLED) {
           failed.add(item);
           if (results[i]?.needsSudo) needsSudo.add(item);
-          itemError ??= error ?? "No result";
+          itemError ??= error ?? getApp().t("fileManager.unknownError");
         }
       });
       opts.onBatchDone?.(trashed);
     } catch (error) {
-      thrown = error ?? new Error("Batch failed");
+      thrown = error ?? new Error(getApp().t("fileManager.unknownError"));
       for (const item of batch) failed.add(item);
       return;
     }

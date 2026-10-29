@@ -1,11 +1,20 @@
 import type { Request, Response, Router } from "express";
-import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
+import type {
+  PluginContext,
+  PluginDesktopLocal,
+} from "@termix-ssh/plugin-sdk/backend";
 import { relayCopy } from "./c2c.js";
 import { CONTAINER_ID_RE, HttpError, type Logger } from "./helpers.js";
 import type { ListTarget } from "./fs-list.js";
 import { localOf, registerDesktop } from "./local-desktop.js";
 import { LocalEvents } from "./local-events.js";
-import { downloadToLocal, uploadFromLocal } from "./local-transfer.js";
+import {
+  downloadToLocal,
+  downloadToLocalRemote,
+  uploadFromLocal,
+  uploadFromLocalRemote,
+} from "./local-transfer.js";
+import { RemoteContainer } from "./remote-side.js";
 import type { ContainerSession, Sessions } from "./sessions.js";
 import { safeName, safePath } from "./shell-quote.js";
 import type { Transfer, TransferRegistry } from "./transfers.js";
@@ -137,6 +146,69 @@ export function registerTransferExtra(router: Router, deps: ExtraDeps): void {
   };
 
   /**
+   * The same job for a session that lives on the linked server: the container
+   * half runs there (through the desktop link), only the local half and the
+   * progress are tracked here. Nothing is audited or invalidated locally; the
+   * server does both when its own routes finish.
+   */
+  const remoteJob = async (
+    req: Request,
+    res: Response,
+    direction: Transfer["direction"],
+    what: string,
+    work: (
+      rc: RemoteContainer,
+      local: PluginDesktopLocal,
+      transfer: Transfer,
+    ) => Promise<object>,
+  ) => {
+    const body = (req.body ?? {}) as Body;
+    const userId = userOf(res);
+    if (!userId) return;
+    let transfer: Transfer;
+    let rc: RemoteContainer;
+    let local: PluginDesktopLocal;
+    try {
+      const found = localOf(ctx);
+      if (!found) throw new HttpError(404, "Not desktop", "NOT_DESKTOP");
+      local = found;
+      const sessionId = body.sessionId;
+      if (
+        typeof sessionId !== "string" ||
+        !sessionId ||
+        sessionId.length > 200
+      ) {
+        throw new HttpError(400, "Invalid session id", "BAD_REQUEST");
+      }
+      rc = new RemoteContainer(
+        sessionId,
+        containerId(body.containerId),
+        local.pluginFetch.bind(local),
+      );
+      transfer = transfers.start(body.transferId, userId, direction, 0);
+    } catch (error) {
+      return fail(res, error, what);
+    }
+    res.on("close", () => {
+      if (!res.writableFinished) transfer.controller.abort();
+    });
+    const stopProgress = events.trackProgress(transfer);
+    try {
+      const result = await work(rc, local, transfer);
+      transfers.finish(transfer);
+      stopProgress();
+      res.json({ success: true, bytes: transfer.bytes, ...result });
+    } catch (error) {
+      transfers.finish(transfer, error);
+      stopProgress();
+      fail(res, error, what);
+    }
+  };
+
+  const isRemote = (req: Request) =>
+    ((req.body ?? {}) as Body).origin === "remote";
+
+  /**
    * @openapi
    * /plugin-api/container-files/containers/{sessionId}/copy:
    *   post:
@@ -209,6 +281,7 @@ export function registerTransferExtra(router: Router, deps: ExtraDeps): void {
    *             required: [sessionId, containerId, dir, localPaths]
    *             properties:
    *               sessionId: { type: string }
+   *               origin: { type: string, enum: [local, remote], description: "remote: the container is on the linked server, reached through the desktop link" }
    *               containerId: { type: string }
    *               dir: { type: string }
    *               localPaths: { type: array, items: { type: string } }
@@ -225,24 +298,47 @@ export function registerTransferExtra(router: Router, deps: ExtraDeps): void {
    *       500:
    *         description: "Upload failed"
    */
-  router.post("/local/transfer/upload", (req, res) =>
-    job(req, res, "local-up", "Upload failed", async (session, transfer) => {
-      const body = (req.body ?? {}) as Body;
-      const local = localOf(ctx);
-      if (!local) throw new HttpError(404, "Not desktop", "NOT_DESKTOP");
-      const id = containerId(body.containerId);
-      const dir = safePath(body.dir);
-      const localPaths = localList(body.localPaths);
-      const t = await targetOf(session, id, transfer.controller.signal);
-      const result = await uploadFromLocal(t, local.fs, transfer, {
-        dir,
-        localPaths,
-        renames: renameMap(body.renames),
-        skip: nameList(body.skip),
-      });
-      return { result, audit: ["local_upload", id, dir] };
-    }),
-  );
+  router.post("/local/transfer/upload", (req, res) => {
+    if (isRemote(req)) {
+      return remoteJob(
+        req,
+        res,
+        "local-up",
+        "Upload failed",
+        async (rc, local, transfer) => {
+          const body = (req.body ?? {}) as Body;
+          return uploadFromLocalRemote(rc, local.fs, transfer, {
+            dir: safePath(body.dir),
+            localPaths: localList(body.localPaths),
+            renames: renameMap(body.renames),
+            skip: nameList(body.skip),
+          });
+        },
+      );
+    }
+    return job(
+      req,
+      res,
+      "local-up",
+      "Upload failed",
+      async (session, transfer) => {
+        const body = (req.body ?? {}) as Body;
+        const local = localOf(ctx);
+        if (!local) throw new HttpError(404, "Not desktop", "NOT_DESKTOP");
+        const id = containerId(body.containerId);
+        const dir = safePath(body.dir);
+        const localPaths = localList(body.localPaths);
+        const t = await targetOf(session, id, transfer.controller.signal);
+        const result = await uploadFromLocal(t, local.fs, transfer, {
+          dir,
+          localPaths,
+          renames: renameMap(body.renames),
+          skip: nameList(body.skip),
+        });
+        return { result, audit: ["local_upload", id, dir] };
+      },
+    );
+  });
 
   /**
    * @openapi
@@ -260,6 +356,7 @@ export function registerTransferExtra(router: Router, deps: ExtraDeps): void {
    *             required: [sessionId, containerId, paths, localDir]
    *             properties:
    *               sessionId: { type: string }
+   *               origin: { type: string, enum: [local, remote], description: "remote: the container is on the linked server, reached through the desktop link" }
    *               containerId: { type: string }
    *               paths: { type: array, items: { type: string } }
    *               localDir: { type: string }
@@ -276,8 +373,25 @@ export function registerTransferExtra(router: Router, deps: ExtraDeps): void {
    *       500:
    *         description: "Download failed"
    */
-  router.post("/local/transfer/download", (req, res) =>
-    job(
+  router.post("/local/transfer/download", (req, res) => {
+    if (isRemote(req)) {
+      return remoteJob(
+        req,
+        res,
+        "local-down",
+        "Download failed",
+        async (rc, local, transfer) => {
+          const body = (req.body ?? {}) as Body;
+          return downloadToLocalRemote(rc, local.fs, transfer, {
+            paths: pathList(body.paths),
+            localDir: localList([body.localDir])[0],
+            renames: renameMap(body.renames),
+            skip: nameList(body.skip),
+          });
+        },
+      );
+    }
+    return job(
       req,
       res,
       "local-down",
@@ -298,6 +412,6 @@ export function registerTransferExtra(router: Router, deps: ExtraDeps): void {
         });
         return { result, audit: ["local_download", id, paths[0]] };
       },
-    ),
-  );
+    );
+  });
 }

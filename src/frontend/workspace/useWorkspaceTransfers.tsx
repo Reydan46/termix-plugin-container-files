@@ -14,10 +14,14 @@ import {
   transferStatus,
 } from "../containerFsApi";
 import { isVirtualPath } from "../archivePath";
-import { listLocalDirectory } from "../vendor/file-manager/lib/local-files";
+import { originOfSession } from "../sessionOrigin";
+import {
+  listLocalDirectory,
+  localPathsExist,
+  trashLocalPaths,
+} from "../vendor/file-manager/lib/local-files";
 import { localBaseName } from "./localPaths";
-import { useWindowManager } from "../vendor/file-manager/components/WindowManager";
-import { ConflictWindow } from "./ConflictWindow";
+import { useAskConflicts } from "./useConflictWindow";
 import {
   baseName,
   findConflicts,
@@ -41,6 +45,11 @@ export interface TransferRequest {
   from: { containerId: string | null; items: TransferSource[] };
   to: { containerId: string | null; dir: string };
   move: boolean;
+  /**
+   * Allows `move` for items of this computer: after a complete transfer they
+   * are sent to the trash. Drag and drop never sets it.
+   */
+  trashLocalSource?: boolean;
 }
 
 function errorText(error: unknown, fallback: string): string {
@@ -63,40 +72,15 @@ export function useWorkspaceTransfers({
   refreshContainers: (containerIds: (string | null)[]) => void;
 }) {
   const { t } = useTranslation();
-  const { openWindow } = useWindowManager();
   const queue = React.useMemo(() => new TransferQueue(), []);
   React.useEffect(() => () => queue.cancelAll(), [queue]);
+
+  const origin = originOfSession(sessionId);
 
   const latest = React.useRef({ t, containerLabel, refreshContainers });
   latest.current = { t, containerLabel, refreshContainers };
 
-  const askConflicts = (
-    items: SourceItem[],
-    targetLabel: string,
-    renamed: Record<string, string>,
-  ): Promise<Record<string, Decision> | null> =>
-    new Promise((resolve) => {
-      const title = latest.current.t("workspace.conflictTitle");
-      openWindow({
-        title,
-        x: 200,
-        y: 140,
-        width: 520,
-        height: 420,
-        isMaximized: false,
-        isMinimized: false,
-        component: (windowId: string) => (
-          <ConflictWindow
-            windowId={windowId}
-            title={title}
-            items={items}
-            renamed={renamed}
-            targetLabel={targetLabel}
-            onResult={resolve}
-          />
-        ),
-      });
-    });
+  const askConflicts = useAskConflicts();
 
   const run = async (
     request: TransferRequest,
@@ -123,6 +107,10 @@ export function useWorkspaceTransfers({
     const sameContainer =
       from.containerId !== null && from.containerId === to.containerId;
     const cheapMove = move && sameContainer;
+    // Local-pane transfers are tracked by this device's backend even when the
+    // container lives on the server; only container to container runs there.
+    const trackedOn =
+      from.containerId === null || to.containerId === null ? "local" : origin;
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal.addEventListener("abort", onAbort, { once: true });
@@ -135,7 +123,7 @@ export function useWorkspaceTransfers({
       label: tr("fileManager.cancel"),
       onClick: () => {
         controller.abort();
-        void cancelTransfer(transferId);
+        void cancelTransfer(transferId, trackedOn);
       },
     };
     const render = () => {
@@ -147,6 +135,8 @@ export function useWorkspaceTransfers({
     };
     const id = toast.loading(title, { cancel, duration: Infinity });
     let done = false;
+    // Entries the copy left out: the source must stay whole then.
+    let partial = false;
     try {
       if (cheapMove) {
         for (const item of items) {
@@ -164,7 +154,7 @@ export function useWorkspaceTransfers({
       } else {
         render();
         poll = setInterval(() => {
-          void transferStatus(transferId).then((s) => {
+          void transferStatus(transferId, trackedOn).then((s) => {
             if (!s || closed) return;
             loaded = s.bytes;
             total = s.total;
@@ -204,13 +194,15 @@ export function useWorkspaceTransfers({
             (res.files ?? 0) + (res.dirs ?? 0) === 0
           )
             throw new Error(tr("workspace.nothingWritten"));
-          if (res.skipped?.length)
+          if (res.skipped?.length) {
+            partial = true;
             toast.warning(
               tr("workspace.copySkipped", {
                 count: res.skipped.length,
                 names: res.skipped.slice(0, 3).join(", "),
               }),
             );
+          }
         } else if (from.containerId !== null && to.containerId !== null) {
           await copyBetween(
             sessionId,
@@ -227,14 +219,22 @@ export function useWorkspaceTransfers({
             controller.signal,
           );
         } else {
-          throw new Error("Local to local is not supported");
+          throw new Error(t("containerFiles.localToLocal"));
         }
-        if (move && from.containerId !== null) {
+        if (move && partial) {
+          toast.warning(tr("workspace.moveKeptSource"));
+        } else if (move && !controller.signal.aborted) {
           try {
-            await fsApi.delete(
-              targetKey(sessionId, from.containerId),
-              items.map((i) => i.path),
-            );
+            if (from.containerId === null) {
+              const res = await trashLocalPaths(items.map((i) => i.path));
+              if (res.failed.length > 0)
+                throw new Error(res.failed.map((f) => f.path).join(", "));
+            } else {
+              await fsApi.delete(
+                targetKey(sessionId, from.containerId),
+                items.map((i) => i.path),
+              );
+            }
           } catch (error) {
             toast.error(
               tr("workspace.moveCleanupFailed", {
@@ -281,8 +281,9 @@ export function useWorkspaceTransfers({
   const transfer = async (request: TransferRequest): Promise<boolean> => {
     const { t: tr, containerLabel: label } = latest.current;
     const { from, to } = request;
-    // Moving out of this computer would delete local files: always a copy.
-    const move = request.move && from.containerId !== null;
+    // Moving out of this computer deletes local files: a copy unless asked.
+    const move =
+      request.move && (from.containerId !== null || !!request.trashLocalSource);
     if (from.containerId === null && to.containerId === null) return false;
     if (to.containerId !== null && isVirtualPath(to.dir)) {
       toast.error(tr("containerFiles.archiveReadOnly"));
@@ -297,7 +298,7 @@ export function useWorkspaceTransfers({
     }
     const sameContainer =
       from.containerId !== null && from.containerId === to.containerId;
-    const items = from.items.filter(
+    let items = from.items.filter(
       (i) =>
         !(
           sameContainer &&
@@ -308,6 +309,24 @@ export function useWorkspaceTransfers({
     if (items.length === 0) {
       toast.error(tr("workspace.intoItself"));
       return false;
+    }
+    if (from.containerId === null) {
+      // A stale clipboard (files moved or deleted since): skip what is gone.
+      try {
+        const there = new Set(await localPathsExist(items.map((i) => i.path)));
+        const gone = items.filter((i) => !there.has(i.path));
+        if (gone.length > 0) {
+          toast.warning(
+            tr("workspace.missingSkipped", {
+              names: gone.map((i) => localBaseName(i.path)).join(", "),
+            }),
+          );
+          items = items.filter((i) => there.has(i.path));
+          if (items.length === 0) return false;
+        }
+      } catch {
+        // Cannot tell: let the transfer report its own error.
+      }
     }
     let existing: Set<string>;
     try {

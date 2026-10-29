@@ -21,6 +21,11 @@ export interface Capabilities {
   findPrintf: boolean;
   statC: boolean;
   tools: string[];
+  tarFlavor?: "gnu" | "busybox" | "bsd" | "other";
+  /** Absent when the server plugin is older: then try and map the error. */
+  appendSupport?: AppendSupport;
+  /** Same for deleting entries from an archive (absent on an older server). */
+  deleteSupport?: DeleteSupport;
   /** Why exec is unavailable (absent when it works). */
   reason?: LimitReason;
   status?: string;
@@ -28,6 +33,20 @@ export interface Capabilities {
   detail?: string;
   rootless?: boolean;
 }
+
+export type AppendVerdict =
+  | { ok: true }
+  | { ok: false; reason: "busybox-tar" | "no-tool"; tool?: string };
+
+/** An older server sends only the first five kinds. */
+export type AppendSupport = Partial<Record<AppendKind, AppendVerdict>>;
+
+export type AppendKind = "zip" | "tar" | "tgz" | "tbz" | "txz" | "tzst" | "7z";
+
+export type DeleteVerdict =
+  { ok: true } | { ok: false; reason: "gnu-tar" | "no-tool"; tool?: string };
+
+export type DeleteSupport = Partial<Record<AppendKind, DeleteVerdict>>;
 
 export type LimitReason =
   "stopped" | "paused" | "exec-denied" | "no-shell" | "exec-failed";

@@ -96,6 +96,7 @@ function makeSession(client: FakeClient): ContainerSession {
     lastActive: 0,
     activeOperations: 0,
     states: new Map(),
+    mounts: new Map(),
     capabilities: new Map(),
   };
 }

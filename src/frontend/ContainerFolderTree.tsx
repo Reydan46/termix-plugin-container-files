@@ -3,6 +3,8 @@ import { ChevronRight, Folder, FolderOpen, Link2, Loader2 } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { TREE_MAX, TREE_MIN } from "./useFolderTree";
 import { TREE_NODE_CAP, type TreeNodes } from "./folderTree";
+import type { MountMark } from "./mountLookup";
+import { MOUNT_ICON_CLASS, MountLetters } from "./MountLetters";
 
 interface Props {
   nodes: TreeNodes;
@@ -22,6 +24,8 @@ interface Props {
   header?: React.ReactNode;
   /** Drop effect offered over a folder; default "move". */
   dropEffect?: "move" | "copy";
+  /** Badge for a folder that is a mount point. */
+  mountMark?: (path: string) => MountMark | null;
 }
 
 const DEFAULT_ROOTS = [{ path: "/", label: "/" }] as const;
@@ -121,13 +125,23 @@ export function ContainerFolderTree(props: Props): React.ReactElement {
               />
             )}
           </button>
-          {open ? (
-            <FolderOpen className="size-3.5 shrink-0" />
-          ) : (
-            <Folder className="size-3.5 shrink-0" />
-          )}
-          <span className="min-w-0 flex-1 truncate">{name}</span>
-          {link && <Link2 className="size-3 shrink-0 opacity-60" />}
+          {(() => {
+            const mark = props.mountMark?.(path);
+            const Icon = open ? FolderOpen : Folder;
+            return (
+              <>
+                <span
+                  title={mark?.title}
+                  className={`relative inline-flex size-3.5 shrink-0 ${mark ? MOUNT_ICON_CLASS : ""}`}
+                >
+                  <Icon className="size-3.5" />
+                  {mark && <MountLetters label={mark.label} />}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{name}</span>
+                {link && <Link2 className="size-3 shrink-0 opacity-60" />}
+              </>
+            );
+          })()}
         </div>
         {open && node && (
           <>

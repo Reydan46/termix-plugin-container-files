@@ -20,6 +20,8 @@ import {
   SSHAuthDialog,
   TOTPDialog,
   ViewToggle,
+  resolveConnectionOrigin,
+  resolveRemoteHostId,
   useAdaptivePolling,
   useConnectionLog,
   type GridSize,
@@ -39,6 +41,8 @@ import {
 import { ContainerList, ContainerTable } from "./containers/ContainerList";
 import { ContainerWorkspace } from "./workspace/ContainerWorkspace";
 import { runtimeLabel } from "./runtimeLabel";
+import { planConnect, type BlockedKey } from "./connectOrigin";
+import { getApp } from "./app";
 
 interface PromptState {
   kind: "totp" | "browser";
@@ -48,10 +52,6 @@ interface PromptState {
   url?: string;
   code?: string;
   label?: string;
-}
-
-function newSessionId(): string {
-  return `cf-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 function toContainerHost(record: Record<string, unknown>): ContainerHost {
@@ -116,6 +116,8 @@ function ContainerFilesInner({
   const [isConnecting, setIsConnecting] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [loadedOnce, setLoadedOnce] = React.useState(false);
+  // Why this host cannot connect right now (shown instead of the connect screen).
+  const [blocked, setBlocked] = React.useState<BlockedKey | null>(null);
   const [prompt, setPrompt] = React.useState<PromptState | null>(null);
   const [showAuthDialog, setShowAuthDialog] = React.useState(false);
   const [authReason, setAuthReason] = React.useState<
@@ -208,10 +210,30 @@ function ContainerFilesInner({
     userProvidedKeyPassword?: string;
   }) => {
     if (!currentHost?.id) return;
-    const sid = newSessionId();
+    const localHostId = currentHost.id;
     setIsConnecting(true);
     try {
-      const result = await sessionApi.connect(sid, currentHost.id, credentials);
+      const plan = await planConnect({
+        desktopAvailable: getApp().desktop.available,
+        localHostId,
+        resolveOrigin: () =>
+          resolveConnectionOrigin(
+            (liveRecord ?? rawHost ?? {}) as {
+              connectionOrigin?: "local" | "remote" | null;
+            },
+          ),
+        remoteServerUrl: () => getApp().desktop.remoteServerUrl(),
+        remoteHostId: () =>
+          resolveRemoteHostId(rawHost?.syncId as string | null | undefined),
+        preflight: (sid) => sessionApi.status(sid),
+      });
+      if (plan.kind === "blocked") {
+        setBlocked(plan.key);
+        return;
+      }
+      setBlocked(null);
+      const sid = plan.sessionId;
+      const result = await sessionApi.connect(sid, plan.hostId, credentials);
       applyConnectResult(sid, result, !credentials);
     } catch (error) {
       reportFailure(error, t("containerFiles.connectionFailed"));
@@ -233,7 +255,9 @@ function ContainerFilesInner({
   React.useEffect(() => {
     if (!sessionId) return;
     return () => {
-      sessionApi.disconnect(sessionId).catch(() => {});
+      sessionApi.disconnect(sessionId).catch(() => {
+        // Closing is best effort; the backend drops idle sessions on its own.
+      });
     };
   }, [sessionId]);
 
@@ -241,7 +265,9 @@ function ContainerFilesInner({
     if (!sessionId || !isVisible) return;
     const keepalive = setInterval(
       () => {
-        sessionApi.keepalive(sessionId).catch(() => {});
+        sessionApi.keepalive(sessionId).catch(() => {
+          // A missed ping is retried on the next tick.
+        });
       },
       10 * 60 * 1000,
     );
@@ -347,7 +373,10 @@ function ContainerFilesInner({
     const sid = prompt?.sessionId;
     setPrompt(null);
     setIsConnecting(false);
-    if (sid) sessionApi.disconnect(sid).catch(() => {});
+    if (sid)
+      sessionApi.disconnect(sid).catch(() => {
+        // Closing is best effort; the backend drops idle sessions on its own.
+      });
     onClose?.();
   };
 
@@ -365,6 +394,7 @@ function ContainerFilesInner({
   };
 
   const handleRetry = () => {
+    setBlocked(null);
     initializingRef.current = false;
     setSessionId(null);
     setConnected(false);
@@ -433,6 +463,22 @@ function ContainerFilesInner({
   const wrapperClass =
     "h-full w-full text-foreground overflow-hidden bg-transparent relative";
 
+  if (blocked && !isConnecting && !connected) {
+    return (
+      <div style={wrapperStyle} className={wrapperClass}>
+        <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+          <p className="max-w-md text-sm text-muted-foreground">
+            {t(`containerFiles.${blocked}`)}
+          </p>
+          <Button variant="outline" onClick={handleRetry}>
+            {t("containerFiles.remoteRetry")}
+          </Button>
+        </div>
+        {dialogs}
+      </div>
+    );
+  }
+
   if (isConnecting || !connected) {
     return (
       <div style={wrapperStyle} className={wrapperClass}>
@@ -487,8 +533,6 @@ function ContainerFilesInner({
             containers={containers}
             initialContainerId={selectedId}
             isVisible={isVisible}
-            runtime={runtime}
-            hostConfig={liveRecord ?? rawHost}
             onContainerState={(id, state) => state && patchContainer(id, state)}
             onChanged={handleChanged}
             onListNeeded={setPickerOpen}

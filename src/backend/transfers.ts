@@ -286,6 +286,8 @@ export interface UploadParams {
   overwrite: boolean;
   mode?: number;
   mtime?: Date;
+  /** Byte count to use when the request carries no Content-Length. */
+  size?: number;
 }
 
 /** Looks up uid/gid of a directory so uploads belong to the same owner. */
@@ -337,12 +339,9 @@ export async function upload(
     return { bytes: transfer.bytes };
   }
 
-  const size = Number(req.headers["content-length"]);
-  if (
-    !Number.isFinite(size) ||
-    size < 0 ||
-    req.headers["content-length"] === undefined
-  ) {
+  const declared = req.headers["content-length"];
+  const size = declared === undefined ? params.size : Number(declared);
+  if (size === undefined || !Number.isFinite(size) || size < 0) {
     throw new HttpError(411, "Content-Length is required", "LENGTH_REQUIRED");
   }
   transfer.total = size;

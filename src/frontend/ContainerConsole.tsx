@@ -4,10 +4,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
-import {
-  pluginWsUrl,
-  resolveConnectionOrigin,
-} from "@termix-ssh/plugin-sdk/ui";
+import { pluginWsUrl } from "@termix-ssh/plugin-sdk/ui";
+import type { Origin } from "./sessionOrigin";
 
 /** A shell that ends sooner than this with an error did not start properly. */
 export const STARTUP_MS = 3000;
@@ -25,7 +23,8 @@ interface Props {
   containerId: string;
   dir: string;
   shell: string;
-  hostConfig: unknown;
+  /** The origin of the session; the console socket opens on the same backend. */
+  origin: Origin;
   isVisible: boolean;
   /** The shell failed to start; the caller offers another one. */
   onEarlyFailure: (message?: string) => void;
@@ -52,7 +51,7 @@ export function ContainerConsole({
   containerId,
   dir,
   shell,
-  hostConfig,
+  origin,
   isVisible,
   onEarlyFailure,
   onStarted,
@@ -123,9 +122,6 @@ export function ContainerConsole({
 
     void (async () => {
       try {
-        const origin = await resolveConnectionOrigin(
-          (hostConfig ?? {}) as { connectionOrigin?: "local" | "remote" },
-        );
         const target = await pluginWsUrl("container-files", "/console", {
           origin,
         });

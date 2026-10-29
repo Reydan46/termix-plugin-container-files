@@ -1,0 +1,120 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index e674ab7..5e19a24 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
+ import { useVirtualizer } from "@tanstack/react-virtual";
+ import { cn } from "@termix-ssh/plugin-sdk/ui";
+ import { isActivePane, PANE_ATTR } from "../../paneFocus";
++import { MOUNT_ICON_CLASS, MountLetters } from "../../MountLetters";
+ import {
+   Folder,
+   File,
+@@ -84,6 +85,15 @@ interface DragState {
+   mousePosition?: { x: number; y: number };
+ }
+ 
++interface MountMark {
++  title: string;
++  readOnly: boolean;
++  /** Where the mount comes from: a host path, a volume name or "tmpfs". */
++  target: string;
++  /** Translated "RW" / "RO" label. */
++  label: string;
++}
++
+ interface FileManagerGridProps {
+   files: FileItem[];
+   selectedFiles: FileItem[];
+@@ -133,6 +143,8 @@ interface FileManagerGridProps {
+   onNavigateUp?: () => void;
+   /** Scrolls back to the top whenever this value changes (e.g. the folder). */
+   scrollResetKey?: string;
++  /** Marks entries that are container mount points: blue icon, RW/RO label, where it points. */
++  mountMark?: (file: FileItem) => MountMark | null;
+ }
+ 
+ const getFileTypeColor = (file: FileItem): string => {
+@@ -151,14 +163,22 @@ const getFileIcon = (
+   file: FileItem,
+   viewMode: "grid" | "list" = "grid",
+   compact = false,
++  mark: MountMark | null = null,
+ ) => {
+   const icon = getBaseFileIcon(file, viewMode, compact);
++  const linked = !!file.linkTarget && file.type !== "link";
+   // Links to files and folders keep their icon but get a link badge.
+-  if (!file.linkTarget || file.type === "link") return icon;
++  if (!linked && !mark) return icon;
+   return (
+-    <span className="relative inline-flex">
+-      {icon}
+-      <FileSymlink className="absolute -bottom-1 -right-1 size-3 rounded-sm bg-background text-blue-400" />
++    <span title={mark?.title} className="relative inline-flex items-center">
++      {/* A mount point is a filled blue icon with RW/RO drawn inside it. */}
++      <span className={cn("relative inline-flex", mark && MOUNT_ICON_CLASS)}>
++        {icon}
++        {mark && <MountLetters label={mark.label} />}
++      </span>
++      {linked && (
++        <FileSymlink className="absolute -bottom-1 -right-1 size-3 rounded-sm bg-background text-blue-400" />
++      )}
+     </span>
+   );
+ };
+@@ -282,6 +302,7 @@ export function FileManagerGrid({
+   parentPath,
+   onNavigateUp,
+   scrollResetKey,
++  mountMark,
+ }: FileManagerGridProps) {
+   const { t } = useTranslation();
+   const gridRef = useRef<HTMLDivElement>(null);
+@@ -1324,7 +1345,7 @@ export function FileManagerGrid({
+                                   compact ? "mb-1" : "mb-2",
+                                 )}
+                               >
+-                                {getFileIcon(file, viewMode, compact)}
++                                {getFileIcon(file, viewMode, compact, mountMark?.(file) ?? null)}
+                               </div>
+                               <div className="w-full flex flex-col items-center pointer-events-none">
+                                 {editingFile?.path === file.path ? (
+@@ -1364,6 +1385,14 @@ export function FileManagerGrid({
+                                     → {file.linkTarget}
+                                   </p>
+                                 )}
++                                {mountMark?.(file) && (
++                                  <p
++                                    className="text-[10px] text-blue-500 dark:text-blue-400 mt-0.5 truncate w-full text-center"
++                                    title={mountMark(file)?.title}
++                                  >
++                                    → {mountMark(file)?.target}
++                                  </p>
++                                )}
+                               </div>
+                             </div>
+                           );
+@@ -1537,7 +1566,7 @@ export function FileManagerGrid({
+                           )}
+                         >
+                           <div className="shrink-0">
+-                            {getFileIcon(file, viewMode, compact)}
++                            {getFileIcon(file, viewMode, compact, mountMark?.(file) ?? null)}
+                           </div>
+                           {isEditing ? (
+                             <input
+@@ -1565,6 +1594,14 @@ export function FileManagerGrid({
+                                   → {file.linkTarget}
+                                 </span>
+                               )}
++                              {mountMark?.(file) && (
++                                <span
++                                  className="text-blue-500 dark:text-blue-400 ml-1 normal-case font-normal"
++                                  title={mountMark(file)?.title}
++                                >
++                                  → {mountMark(file)?.target}
++                                </span>
++                              )}
+                             </span>
+                           )}
+                         </div>

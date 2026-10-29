@@ -1,0 +1,22 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index acb643e..198fa52 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -12,6 +12,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
+ import { cn } from "@termix-ssh/plugin-sdk/ui";
+ import { dialogOwnsKey } from "../../popup/keyGuard";
+ import { isActivePane, PANE_ATTR } from "../../paneFocus";
++import { layoutKey } from "../../layoutKey";
+ import { MOUNT_ICON_CLASS, MountLetters } from "../../MountLetters";
+ import {
+   Folder,
+@@ -1077,7 +1078,8 @@ export function FileManagerGrid({
+         return;
+       }
+ 
+-      switch (event.key) {
++      // Ctrl/Cmd shortcuts also work on a non-Latin layout (physical key).
++      switch (layoutKey(event)) {
+         case "Escape":
+           onSelectionChange([]);
+           break;

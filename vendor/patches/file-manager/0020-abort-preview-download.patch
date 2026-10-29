@@ -1,0 +1,47 @@
+diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
+index a7b3700..5815613 100644
+--- a/components/FileWindow.tsx
++++ b/components/FileWindow.tsx
+@@ -121,6 +121,8 @@ export function FileWindow({
+   };
+ 
+   useEffect(() => {
++    // Closing the viewer or switching file cancels a download still running.
++    const controller = new AbortController();
+     const loadFileContent = async () => {
+       if (file.type !== "file") return;
+ 
+@@ -129,7 +131,10 @@ export function FileWindow({
+ 
+         await ensureSSHConnection();
+ 
+-        const response = await readSSHFile(sshSessionId, file.path);
++        const response = await readSSHFile(sshSessionId, file.path, {
++          signal: controller.signal,
++        });
++        if (controller.signal.aborted) return;
+         let fileContent = response.content || "";
+ 
+         if (response.encoding === "base64") {
+@@ -198,6 +203,7 @@ export function FileWindow({
+         const extension = file.name.split(".").pop()?.toLowerCase();
+         setIsEditable(!mediaExtensions.includes(extension || ""));
+       } catch (error: unknown) {
++        if (controller.signal.aborted) return;
+         const err = error as {
+           message?: string;
+           isFileNotFound?: boolean;
+@@ -261,11 +267,12 @@ export function FileWindow({
+           }
+         }
+       } finally {
+-        setIsLoading(false);
++        if (!controller.signal.aborted) setIsLoading(false);
+       }
+     };
+ 
+     loadFileContent();
++    return () => controller.abort();
+   }, [file, sshSessionId, sshHost]);
+ 
+   const handleRevert = async () => {

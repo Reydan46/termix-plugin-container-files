@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { copyToClipboard } from "@termix-ssh/plugin-sdk/ui";
+import { layoutKey } from "./layoutKey";
 import { Download, Laptop } from "lucide-react";
 import { toast } from "sonner";
 import { ContainerFolderTree } from "./ContainerFolderTree";
@@ -23,6 +24,11 @@ import {
 import { useFolderTree } from "./useFolderTree";
 import { useConfirm } from "./popup/useConfirm";
 import { parseInternalFiles } from "./workspace/dragRegistry";
+import {
+  resolvePasteTarget,
+  type ClipItem,
+  type ClipMode,
+} from "./workspace/clipboard";
 import type { TreeEntry } from "./folderTree";
 import {
   THIS_PC,
@@ -53,6 +59,7 @@ import {
   revealLocalPath,
   trashLocalPaths,
 } from "./vendor/file-manager/lib/local-files";
+import { dialogOwnsKey } from "./popup/keyGuard";
 import { LocalFileContextMenu } from "./vendor/file-manager/LocalFileContextMenu";
 import {
   LOCAL_FILES_DRAG_MIME,
@@ -127,6 +134,19 @@ export interface LocalFileManagerProps {
   /** "Upload to server": sends local paths to the other pane's folder. */
   onUploadToRemote?: (localPaths: string[]) => void;
   onPathChange?: (localPath: string) => void;
+  /** Workspace clipboard shared with the container panes (Desktop). */
+  clipboard?: LocalPaneClipboard;
+}
+
+export interface LocalPaneClipboard {
+  /** Paths of this pane dimmed as cut. */
+  cutPaths: ReadonlySet<string>;
+  canPaste: boolean;
+  /** Anything on the clipboard, so Escape has something to clear. */
+  active: boolean;
+  set: (items: ClipItem[], mode: ClipMode) => void;
+  paste: (dir: string) => void;
+  clear: () => void;
 }
 
 /**
@@ -141,6 +161,7 @@ export function LocalFileManager({
   onRemoteItemsDropped,
   onUploadToRemote,
   onPathChange,
+  clipboard,
 }: LocalFileManagerProps): React.ReactElement {
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -713,9 +734,40 @@ export function LocalFileManager({
 
   const upPath = currentPath ? upTarget(currentPath) : null;
 
+  const clipSet = (entries: LocalFileEntry[], mode: ClipMode) => {
+    if (!clipboard || drivesMode || entries.length === 0) return;
+    clipboard.set(
+      entries.map((e) => ({
+        path: e.path,
+        name: e.name,
+        isDirectory: e.type === "directory",
+      })),
+      mode,
+    );
+    toast.success(
+      t(mode === "cut" ? "containerFiles.cut" : "containerFiles.copied", {
+        count: entries.length,
+      }),
+    );
+  };
+  const clipPaste = (folder?: LocalFileEntry) => {
+    if (!clipboard || drivesMode || !pathRef.current) return;
+    const dir = folder
+      ? folder.path
+      : resolvePasteTarget(
+          pathRef.current,
+          selectedEntries().map((e) => ({
+            path: e.path,
+            isDirectory: e.type === "directory",
+          })),
+        );
+    clipboard.paste(dir);
+  };
+
   const onKey = (event: KeyboardEvent) => {
     if (event.defaultPrevented || contextMenu.visible) return;
     if (!isActivePane(rootRef.current)) return;
+    if (dialogOwnsKey(event)) return;
     const target = event.target as Element | null;
     if (
       target?.closest?.(
@@ -735,7 +787,9 @@ export function LocalFileManager({
       event.preventDefault();
       return;
     }
-    switch (event.key) {
+    // Ctrl/Cmd shortcuts work on any keyboard layout (physical key).
+    const key = layoutKey(event);
+    switch (key) {
       case "Enter":
         if (picked.length === 1) {
           event.preventDefault();
@@ -764,7 +818,26 @@ export function LocalFileManager({
         event.preventDefault();
         refresh(true);
         break;
+      case "c":
+      case "C":
+      case "x":
+      case "X":
+        if (clipboard && mod && !event.shiftKey && !event.altKey) {
+          if (picked.length > 0 && !drivesMode) {
+            event.preventDefault();
+            clipSet(picked, key.toLowerCase() === "x" ? "cut" : "copy");
+          }
+        }
+        break;
+      case "v":
+      case "V":
+        if (clipboard?.canPaste && mod && !event.shiftKey && !event.altKey) {
+          event.preventDefault();
+          clipPaste();
+        }
+        break;
       case "Escape":
+        if (clipboard?.active) clipboard.clear();
         if (selected.size > 0) {
           event.preventDefault();
           setSelected(new Set());
@@ -878,6 +951,17 @@ export function LocalFileManager({
           selectedCount={drivesMode ? 0 : selected.size}
           onDeleteSelected={() => trashEntries(selectedEntries())}
           onCopySelected={() => copyEntryPaths(selectedEntries())}
+          onClipCopy={
+            clipboard ? () => clipSet(selectedEntries(), "copy") : undefined
+          }
+          onClipCut={
+            clipboard ? () => clipSet(selectedEntries(), "cut") : undefined
+          }
+          onClipPaste={
+            clipboard?.canPaste && !drivesMode && currentPath !== ""
+              ? () => clipPaste()
+              : undefined
+          }
           onUploadSelected={onUploadToRemote ? uploadSelected : undefined}
           search={search}
           onSearch={setSearch}
@@ -945,6 +1029,7 @@ export function LocalFileManager({
             onBackgroundClick={() => setSelected(new Set())}
             viewMode={viewPrefs.viewMode}
             density={viewPrefs.density}
+            cutPaths={clipboard?.cutPaths}
           />
         </div>
 
@@ -995,6 +1080,10 @@ export function LocalFileManager({
         onRefresh={() => refresh(true)}
         onToggleHidden={() => setShowHidden(!showHidden)}
         onDelete={trashEntries}
+        onCopy={clipboard ? (e) => clipSet(e, "copy") : undefined}
+        onCut={clipboard ? (e) => clipSet(e, "cut") : undefined}
+        onPaste={clipboard ? clipPaste : undefined}
+        canPaste={!!clipboard?.canPaste && !drivesMode}
       />
     </div>
   );

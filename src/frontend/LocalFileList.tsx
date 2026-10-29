@@ -167,6 +167,8 @@ interface Props {
   onBackgroundClick: () => void;
   viewMode: LocalViewMode;
   density: LocalDensity;
+  /** Paths dimmed because they are cut to the clipboard. */
+  cutPaths?: ReadonlySet<string>;
 }
 
 function EditInput({
@@ -563,6 +565,7 @@ export function LocalFileList(props: Props): React.ReactElement {
                   isDrop &&
                     "bg-accent-brand/20 border-accent-brand border-dashed",
                   entry.hidden && "opacity-60",
+                  props.cutPaths?.has(entry.path) && "opacity-50",
                 )}
                 title={entry.path}
                 {...entryHandlers(entry)}
@@ -691,6 +694,7 @@ export function LocalFileList(props: Props): React.ReactElement {
                           isDrop &&
                             "bg-accent-brand/20 border-accent-brand border-dashed",
                           entry.hidden && "opacity-60",
+                          props.cutPaths?.has(entry.path) && "opacity-50",
                         ),
                       )}
                       title={entry.path}

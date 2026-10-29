@@ -17,9 +17,15 @@ describe("archive virtual paths", () => {
       "a.tar.bz2",
       "a.tar.xz",
       "a.zip",
+      "a.7z",
+      "A.RAR",
+      "a.tar.zst",
+      "a.tzst",
+      "a.jar",
+      "a.whl",
     ])
       expect(isBrowsableArchive(n), n).toBe(true);
-    for (const n of ["a.gz", "a.7z", "a.txt", "tar"])
+    for (const n of ["a.gz", "a.zst", "a.xz", "a.bz2", "a.txt", "tar"])
       expect(isBrowsableArchive(n), n).toBe(false);
   });
 

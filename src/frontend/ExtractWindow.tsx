@@ -1,4 +1,5 @@
 import React from "react";
+import { DIALOG_DEFAULT } from "./popup/useDialogKeys";
 import { FolderOpen } from "lucide-react";
 import { Input } from "@termix-ssh/plugin-sdk/ui";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
@@ -84,6 +85,7 @@ export function ExtractWindow({
         </button>
         <button
           type="submit"
+          {...DIALOG_DEFAULT}
           disabled={!valid}
           className={POPUP_BUTTON_PRIMARY}
         >

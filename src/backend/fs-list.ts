@@ -447,6 +447,7 @@ export async function listViaCp(
   const channel = await openChannel(
     client,
     cpFromCommand(runtime, containerId, dir),
+    signal,
   );
   const base = dir === "/" ? "" : dir.split("/").pop()!;
   const entries = new Map<string, FileEntry>();

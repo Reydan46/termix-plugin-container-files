@@ -700,6 +700,49 @@ describe("relayCopy", () => {
     expect(bySide(/'-L'/)?.destroyed).toBe(true);
     expect(bySide(/'-a' '-'/)?.destroyed).toBe(true);
   });
+  it("aborts both sides when the cancel lands while the target channel opens", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (e: unknown) => rejections.push(e);
+    process.on("unhandledRejection", onRejection);
+    const transfer = new TransferRegistry().start(
+      "c2c-race-001",
+      "u",
+      "c2c",
+      0,
+    );
+    const client = new FakeClient([
+      [
+        /'cp' '-L' 'a:\/src' '-'/,
+        (s: FakeStream) => {
+          setImmediate(() => s.emit("data", Buffer.alloc(512)));
+        },
+      ],
+      [
+        /'cp' '-a' '-' 'b:\/dest'/,
+        (s: FakeStream) => {
+          s.write = () => true;
+          transfer.controller.abort();
+        },
+      ],
+    ]);
+    try {
+      await expect(
+        relayCopy(target(client, "a"), target(client, "b"), transfer, {
+          paths: ["/src"],
+          dir: "/dest",
+        }),
+      ).rejects.toMatchObject({ code: "CANCELLED" });
+      await tick(30);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+    const bySide = (re: RegExp) =>
+      client.streams.find((_, i) => re.test(client.commands[i]));
+    expect(bySide(/'-L'/)?.destroyed).toBe(true);
+    expect(bySide(/'-a' '-'/)?.destroyed).toBe(true);
+    expect(client.commands.some((c) => c.includes("mv -f"))).toBe(false);
+    expect(rejections).toEqual([]);
+  });
 });
 
 let server: TestServer | null = null;

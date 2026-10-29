@@ -1,9 +1,9 @@
-import React from "react";
 import { toast } from "sonner";
 import type { TranslateFn } from "@termix-ssh/plugin-sdk/frontend";
 import { Archive } from "lucide-react";
 import { TransferProgressBar } from "./vendor/file-manager/components/TransferProgressBar";
 import { formatBytes } from "./UploadProgressToast";
+import type { Origin } from "./sessionOrigin";
 import { operationStatus, type OpStatus, type OpTrack } from "./containerFsApi";
 import {
   OpCancelled,
@@ -65,17 +65,20 @@ function ArchiveProgressToast({
  */
 export async function runWithProgress<T>(opts: {
   t: TranslateFn;
-  kind: "compress" | "extract";
+  /** The origin of the session the operation runs in. */
+  origin: Origin;
+  kind: "compress" | "extract" | "append" | "delete";
   name: string;
   task: (track: OpTrack) => Promise<T>;
 }): Promise<T> {
-  const { t, kind, name, task } = opts;
-  const title = t(
-    kind === "compress"
-      ? "containerFiles.compressingName"
-      : "containerFiles.extractingName",
-    { name },
-  );
+  const { t, origin, kind, name, task } = opts;
+  const titleKey = {
+    compress: "containerFiles.compressingName",
+    extract: "containerFiles.extractingName",
+    append: "containerFiles.appendingName",
+    delete: "containerFiles.deletingFromName",
+  }[kind];
+  const title = t(titleKey, { name });
   const opId = newOpId(kind);
   const controller = new AbortController();
   const startedAt = Date.now();
@@ -100,7 +103,7 @@ export async function runWithProgress<T>(opts: {
   const id = toast.loading(title, { cancel, duration: Infinity });
   render();
   const timer = setInterval(() => {
-    void operationStatus(opId).then((s) => {
+    void operationStatus(opId, origin).then((s) => {
       if (s && !closed) status = s;
       render();
     });

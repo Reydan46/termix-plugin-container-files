@@ -5,6 +5,9 @@ import { PopupHeader } from "../popup/PopupHeader";
 import { POPUP_BUTTON, POPUP_BUTTON_DESTRUCTIVE } from "../popup/popupStyles";
 import { DraggableWindow } from "../vendor/file-manager/components/DraggableWindow";
 import { useWindowManager } from "../vendor/file-manager/components/WindowManager";
+import { DIALOG_BUTTONS_CLASS } from "../popup/dialogStyles";
+import { isTopmostWindow } from "../popup/dialogKeys";
+import { focusDialogDefault, useDialogKeys } from "../popup/useDialogKeys";
 import {
   keepBothName,
   resolveAll,
@@ -68,6 +71,18 @@ export function ConflictWindow({
     onResult(value);
     closeWindow(windowId);
   };
+  // Escape cancels; there is no default choice: arrows pick a choice (the "all
+  // items" row first), then Enter presses the focused one.
+  const bodyRef = React.useRef<HTMLDivElement>(null);
+  const onDialogKey = useDialogKeys({
+    rootRef: bodyRef,
+    topmost: isTopmostWindow(windowId, windows),
+    onCancel: () => settle(null),
+  });
+  const shown = current !== undefined;
+  React.useEffect(() => {
+    if (shown) focusDialogDefault(bodyRef.current);
+  }, [shown]);
   if (!current) return null;
   const apply = (next: ResolveState) => {
     setState(next);
@@ -105,7 +120,12 @@ export function ConflictWindow({
         isMaximized={current.isMaximized}
         zIndex={current.zIndex}
       >
-        <div className="flex h-full flex-col gap-3 overflow-hidden bg-background p-4 text-xs">
+        <div
+          ref={bodyRef}
+          tabIndex={-1}
+          onKeyDown={onDialogKey}
+          className="flex h-full flex-col gap-3 overflow-hidden bg-background p-4 text-xs outline-none"
+        >
           <div className="flex items-start gap-3">
             <span className="flex size-8 shrink-0 items-center justify-center border border-destructive/50 bg-destructive/10 text-destructive">
               <AlertTriangle className="size-4" />
@@ -147,7 +167,7 @@ export function ConflictWindow({
                   <div
                     role="group"
                     aria-label={item.name}
-                    className="flex shrink-0"
+                    className={`flex shrink-0 ${DIALOG_BUTTONS_CLASS}`}
                   >
                     {CHOICES.map((c) => (
                       <button
@@ -171,7 +191,9 @@ export function ConflictWindow({
               );
             })}
           </ul>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 pt-1">
+          <div
+            className={`flex shrink-0 flex-wrap items-center justify-end gap-2 pt-1 ${DIALOG_BUTTONS_CLASS}`}
+          >
             <span className="mr-auto text-muted-foreground">
               {t("workspace.conflictAll")}
             </span>

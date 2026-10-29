@@ -1,5 +1,4 @@
 export const COMPRESS_FORMATS = ["zip", "tar.gz", "tar"] as const;
-export type CompressFormat = (typeof COMPRESS_FORMATS)[number];
 
 /** The archive name suggested for the selection (no extension). */
 export function defaultArchiveName(fileNames: string[]): string {

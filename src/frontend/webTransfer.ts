@@ -1,6 +1,7 @@
 // Browser (Web mode) transfer helpers: dropped-folder traversal, upload
 // planning and streaming a download straight to disk. Everything that does
 // not need the DOM is pure so it can be unit-tested with fake entries.
+import { getApp } from "./app";
 
 export interface UploadPlan {
   /** `rel` is the path under the destination directory, "/" separated. */
@@ -132,7 +133,10 @@ export function canStreamToDisk(): boolean {
  */
 export function pickSaveHandle(suggestedName: string): Promise<SaveHandleLike> {
   const pick = picker();
-  if (!pick) return Promise.reject(new Error("File saving is not supported"));
+  if (!pick)
+    return Promise.reject(
+      new Error(getApp().t("containerFiles.saveUnsupported")),
+    );
   return pick({ suggestedName });
 }
 

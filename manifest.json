@@ -1,7 +1,7 @@
 {
   "id": "container-files",
   "name": "Container Files",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Browse, edit and transfer files in Docker and Podman containers over SSH.",
   "author": {
     "name": "Reydan46",
@@ -16,6 +16,8 @@
     "Browse the filesystem of Docker and Podman containers",
     "Edit text files, manage permissions and standard file operations",
     "Stream uploads and downloads between your computer and a container",
+    "Add files to and delete entries from zip, 7z and tar archives, with mount points marked RW or RO",
+    "Copy and paste between panes and paste files from Explorer or Finder",
     "Works with stopped and minimal containers where the engine allows it"
   ],
   "engine": {

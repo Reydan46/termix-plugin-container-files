@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   childrenOf,
   clearArchiveCache,
+  dropArchiveCache,
   extractArchiveEntries,
   innerPath,
   listArchive,
@@ -131,8 +132,71 @@ describe("archive listing and reading", () => {
     const t = target(client);
     await listArchive(t, "/a.tar", "/");
     client.reply(/-maxdepth 0/, { stdout: statReply("a.tar", "2.0") });
-    await listArchive(t, "/a.tar", "/");
+    vi.useFakeTimers({ now: Date.now() + 10_000, toFake: ["Date"] });
+    try {
+      await listArchive(t, "/a.tar", "/");
+    } finally {
+      vi.useRealTimers();
+    }
     expect(client.commands.filter((c) => c.includes("tar -tvf"))).toHaveLength(
+      2,
+    );
+  });
+
+  it("navigates inside an archive without a second scan or stat", async () => {
+    const client = new FakeClient([
+      [/-maxdepth 0/, { stdout: statReply("a.tgz") }],
+      [/tar -tvzf/, { stdout: TAR_OUT }],
+    ]);
+    const t = target(client);
+    await listArchive(t, "/a.tgz", "/");
+    await listArchive(t, "/a.tgz", "/sub");
+    await readArchiveEntry(t, "/a.tgz", "/readme.txt").catch(() => undefined);
+    expect(client.commands.filter((c) => c.includes("tar -tvzf"))).toHaveLength(
+      1,
+    );
+    expect(
+      client.commands.filter((c) => c.includes("-maxdepth 0")),
+    ).toHaveLength(1);
+  });
+
+  it("revalidates by stat later and reuses the scan when unchanged", async () => {
+    const client = new FakeClient([
+      [/-maxdepth 0/, { stdout: statReply("a.tgz") }],
+      [/tar -tvzf/, { stdout: TAR_OUT }],
+    ]);
+    const t = target(client);
+    await listArchive(t, "/a.tgz", "/");
+    vi.useFakeTimers({ now: Date.now() + 10_000, toFake: ["Date"] });
+    try {
+      await listArchive(t, "/a.tgz", "/sub");
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(
+      client.commands.filter((c) => c.includes("-maxdepth 0")),
+    ).toHaveLength(2);
+    expect(client.commands.filter((c) => c.includes("tar -tvzf"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("shares one scan between parallel requests and drops it on writes", async () => {
+    const client = new FakeClient([
+      [/-maxdepth 0/, { stdout: statReply("a.tgz") }],
+      [/tar -tvzf/, { stdout: TAR_OUT }],
+    ]);
+    const t = target(client);
+    await Promise.all([
+      listArchive(t, "/a.tgz", "/"),
+      listArchive(t, "/a.tgz", "/sub"),
+    ]);
+    expect(client.commands.filter((c) => c.includes("tar -tvzf"))).toHaveLength(
+      1,
+    );
+    dropArchiveCache(t.client);
+    await listArchive(t, "/a.tgz", "/");
+    expect(client.commands.filter((c) => c.includes("tar -tvzf"))).toHaveLength(
       2,
     );
   });

@@ -1,4 +1,5 @@
 import React from "react";
+import { DIALOG_DEFAULT } from "./popup/useDialogKeys";
 import { Input } from "@termix-ssh/plugin-sdk/ui";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { usePopupWindow } from "./popup/PopupContext";
@@ -102,6 +103,7 @@ export function CompressWindow({
         </button>
         <button
           type="submit"
+          {...DIALOG_DEFAULT}
           disabled={!canSubmit}
           className={POPUP_BUTTON_PRIMARY}
         >

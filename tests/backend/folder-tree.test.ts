@@ -3,6 +3,7 @@ import {
   directoriesOnly,
   expansionChain,
   isWithin,
+  keepExpanded,
   mergeChildren,
 } from "../../src/frontend/folderTree";
 import type { FileItem } from "../../src/frontend/vendor/file-manager/host-types";
@@ -51,5 +52,16 @@ describe("folder tree helpers", () => {
     expect(isWithin("/a/b", "/a")).toBe(true);
     expect(isWithin("/ab", "/a")).toBe(false);
     expect(isWithin("/a", "/")).toBe(true);
+  });
+});
+
+describe("keepExpanded", () => {
+  it("drops collapsed nodes so they reload when opened again", () => {
+    const node = { status: "loaded" as const, dirs: [], more: false };
+    const kept = keepExpanded(
+      { "/": node, "/a": node, "/b": node },
+      new Set(["/", "/b"]),
+    );
+    expect(Object.keys(kept)).toEqual(["/", "/b"]);
   });
 });

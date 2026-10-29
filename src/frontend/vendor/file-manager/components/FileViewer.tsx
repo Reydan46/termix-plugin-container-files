@@ -4,6 +4,11 @@ import { cn } from "@termix-ssh/plugin-sdk/ui";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { mediaSource } from "../api/ssh-file-operations-api";
 import {
+  describePreviewProgress,
+  type PreviewProgress,
+} from "../api/preview-progress";
+import { TransferProgressBar } from "./TransferProgressBar";
+import {
   FileText,
   Image as ImageIcon,
   Film,
@@ -75,6 +80,9 @@ interface FileViewerProps {
   content?: string;
   savedContent?: string;
   isLoading?: boolean;
+  /** Download progress of a media/PDF preview; absent for text files. */
+  loadProgress?: PreviewProgress | null;
+  onCancelLoad?: () => void;
   isSaving?: boolean;
   isEditable?: boolean;
   resetKey?: number;
@@ -218,6 +226,8 @@ export function FileViewer({
   content = "",
   savedContent = "",
   isLoading = false,
+  loadProgress,
+  onCancelLoad,
   isSaving = false,
   isEditable = false,
   resetKey,
@@ -341,13 +351,43 @@ export function FileViewer({
   };
 
   if (isLoading) {
+    const view = loadProgress ? describePreviewProgress(loadProgress) : null;
     return (
       <div className="h-full flex items-center justify-center">
-        <div className="text-center">
+        <div className="text-center w-64 max-w-full px-4">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
           <p className="text-sm text-muted-foreground">
             {t("fileManager.loadingFile")}
           </p>
+          {view && (
+            <div className="mt-3 space-y-1">
+              <TransferProgressBar
+                value={view.percent}
+                label={t("fileManager.loadingFile")}
+              />
+              <p className="text-xs text-muted-foreground">
+                {view.total !== undefined
+                  ? t("fileManager.loadProgress", {
+                      loaded: view.loaded,
+                      total: view.total,
+                      percent: view.percent,
+                    })
+                  : t("fileManager.loadProgressUnknown", {
+                      loaded: view.loaded,
+                    })}
+              </p>
+            </div>
+          )}
+          {onCancelLoad && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={onCancelLoad}
+            >
+              {t("fileManager.cancelLoad")}
+            </Button>
+          )}
         </div>
       </div>
     );

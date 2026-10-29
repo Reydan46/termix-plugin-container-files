@@ -12,6 +12,8 @@ import {
 import { POPUP_WIDTH, boxOf, placePopup } from "./popupGeometry";
 import { PopupHeader } from "./PopupHeader";
 import { ConfirmStack, confirmKeyAction } from "./confirmKeys";
+import { ensureDialogStyles } from "./dialogStyles";
+import { moveDialogButtonFocus } from "./useDialogKeys";
 
 const stack = new ConfirmStack();
 
@@ -73,26 +75,74 @@ function ConfirmCard({
     window.addEventListener("resize", place);
     return () => window.removeEventListener("resize", place);
   }, [request.pane]);
+  // The card stays hidden until it is placed, and a hidden button cannot take
+  // focus (autoFocus runs too early), so focus it once it shows. Without this
+  // the focus stayed on the file list that opened the card, and Enter went
+  // there. The previous focus returns when the card closes.
+  React.useLayoutEffect(() => {
+    if (at) confirmRef.current?.focus({ preventScroll: true });
+  }, [at]);
+  const beforeRef = React.useRef<Element | null>(
+    typeof document === "undefined" ? null : document.activeElement,
+  );
+  React.useEffect(() => {
+    const before = beforeRef.current;
+    const card = cardRef.current;
+    return () => {
+      const now = document.activeElement;
+      const lost = !now || now === document.body || !!card?.contains(now);
+      if (lost && before instanceof HTMLElement && before.isConnected)
+        before.focus({ preventScroll: true });
+    };
+  }, []);
   const resultRef = React.useRef(onResult);
   resultRef.current = onResult;
   // Enter confirms and Esc cancels, before a terminal can see the key; only
   // the topmost card answers.
   React.useEffect(() => {
+    ensureDialogStyles();
     const id = stack.push();
     const onKey = (e: KeyboardEvent) => {
+      // Arrows move the selection between Cancel and Confirm.
+      const moved = moveDialogButtonFocus(
+        cardRef.current,
+        {
+          key: e.key,
+          isComposing: e.isComposing,
+          keyCode: e.keyCode,
+          defaultPrevented: e.defaultPrevented,
+          shiftKey: e.shiftKey,
+          ctrlKey: e.ctrlKey,
+          altKey: e.altKey,
+          metaKey: e.metaKey,
+        },
+        document.activeElement,
+        stack.isTop(id),
+      );
+      if (moved) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       const action = confirmKeyAction({
         key: e.key,
         topmost: stack.isTop(id),
+        repeat: e.repeat,
         active: document.activeElement,
         confirmEl: confirmRef.current,
         cancelEl: cancelRef.current,
         body: document.body,
       });
-      if (action === null || action === "native") return;
+      if (action === null) return;
+      // The card is modal: no key goes on to the file pane behind it (its
+      // listeners sit on document, e.g. Enter opens the selected file). Other
+      // listeners on window run before the page, so stop those too.
+      e.stopImmediatePropagation();
+      if (action === "swallow") return;
       e.preventDefault();
-      e.stopPropagation();
       if (action === "confirm") resultRef.current(true);
       else if (action === "cancel") resultRef.current(false);
+      else confirmRef.current?.focus({ preventScroll: true });
     };
     window.addEventListener("keydown", onKey, true);
     return () => {
@@ -173,7 +223,6 @@ function ConfirmCard({
             <button
               ref={confirmRef}
               type="button"
-              autoFocus
               className={
                 destructive ? POPUP_BUTTON_DESTRUCTIVE : POPUP_BUTTON_PRIMARY
               }
@@ -212,11 +261,6 @@ function openConfirm(request: ConfirmRequest): {
     root.render(<ConfirmCard request={request} onResult={finish} />);
   });
   return { promise, cancel: () => finish(false) };
-}
-
-/** Shows one confirm card above everything; resolves with the answer. */
-export function askConfirm(request: ConfirmRequest): Promise<boolean> {
-  return openConfirm(request).promise;
 }
 
 /**

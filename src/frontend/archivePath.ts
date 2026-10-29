@@ -1,17 +1,26 @@
 // Virtual paths for browsing inside an archive: "<archive path>!<inner path>",
 // e.g. "/data/a.tgz!/sub". The root of an archive is "/data/a.tgz!".
 
-const ARCHIVE_NAME = /\.(?:tar|tgz|tar\.gz|tbz2|tar\.bz2|txz|tar\.xz|zip)$/i;
-const VIRTUAL =
-  /^(.+?\.(?:tar|tgz|tar\.gz|tbz2|tar\.bz2|txz|tar\.xz|zip))!(\/.*)?$/i;
+import {
+  archiveKindOf,
+  BROWSABLE_EXTENSIONS,
+  isSingleFileKind,
+} from "./archiveKinds";
+
+const EXTENSIONS = BROWSABLE_EXTENSIONS.map((e) => e.replace(".", "\\.")).join(
+  "|",
+);
+const VIRTUAL = new RegExp(`^(.+?\\.(?:${EXTENSIONS}))!(\\/.*)?$`, "i");
 
 /** True for file names the plugin can browse as an archive. */
 export function isBrowsableArchive(name: string): boolean {
-  return ARCHIVE_NAME.test(name);
+  const kind = archiveKindOf(name);
+  return kind !== null && !isSingleFileKind(kind);
 }
 
-export function isZipName(name: string): boolean {
-  return /\.zip$/i.test(name);
+/** True for archives that can be unpacked: browsable ones and single .gz/.bz2/.xz/.zst files. */
+export function isExtractableArchive(name: string): boolean {
+  return archiveKindOf(name) !== null;
 }
 
 export interface VirtualPath {

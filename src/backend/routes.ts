@@ -4,8 +4,16 @@ import type {
   PluginSshHost,
 } from "@termix-ssh/plugin-sdk/backend";
 import { OpProgressRegistry } from "./op-progress.js";
+import { appendToArchive } from "./archive-append.js";
+import { deleteFromArchive } from "./archive-delete.js";
+import {
+  extractPlanItems,
+  extractWithPolicy,
+  parseExtractPolicy,
+} from "./extract-policy.js";
 import { answerConnect, startConnect } from "./connect.js";
 import { getCapabilities } from "./capabilities.js";
+import { duBytes } from "./c2c.js";
 import {
   getContainerState,
   invalidateContainerState,
@@ -15,6 +23,7 @@ import {
 } from "./containers.js";
 import { readPrincipals } from "./principals.js";
 import { listShells } from "./shells.js";
+import { getMounts } from "./mounts.js";
 import { listDirectory, type ListTarget } from "./fs-list.js";
 import {
   CONTAINER_ID_RE,
@@ -53,15 +62,23 @@ import {
   type TransferRegistry,
 } from "./transfers.js";
 import {
+  dropArchiveCache,
   extractArchiveEntries,
   innerPath,
   listArchive,
   readArchiveEntry,
 } from "./archive.js";
 import type { ContainerSession, Sessions } from "./sessions.js";
+import { createRemoteProxy } from "./remote-proxy.js";
 import { registerTransferExtra } from "./routes-transfer-extra.js";
 
 const LIST_CHUNK = 500;
+
+/** The `size` query of an upload, or undefined when absent or invalid. */
+function sizeParam(value: unknown): number | undefined {
+  if (typeof value !== "string" || !/^\d{1,15}$/.test(value)) return undefined;
+  return Number(value);
+}
 const LIST_CACHE_TTL_MS = 5000;
 
 interface Deps {
@@ -80,6 +97,29 @@ export function registerRoutes(
     next();
   });
   router.use(ctx.rbac.require("use") as never);
+
+  /**
+   * @openapi
+   * /plugin-api/container-files/remote/{path}:
+   *   get:
+   *     summary: "Proxy a request to the linked server (desktop only)"
+   *     tags:
+   *       - Container Files
+   *     parameters:
+   *       - { name: path, in: path, required: true, schema: { type: string }, description: "A route under ssh/, containers/, transfers/ or operations/" }
+   *     responses:
+   *       200:
+   *         description: "The server's reply, streamed as it arrives"
+   *       400:
+   *         description: "The path is not one of the proxied routes"
+   *       401:
+   *         description: "Not signed in here, or the link to the server is signed out"
+   *       404:
+   *         description: "Not the desktop app"
+   *       502:
+   *         description: "The server cannot be reached"
+   */
+  router.use("/remote", createRemoteProxy(ctx));
 
   const opProgress = new OpProgressRegistry();
 
@@ -610,6 +650,42 @@ export function registerRoutes(
     }
   });
 
+  /** Mounts of the container; an engine that cannot report them gives an empty list. */
+  /**
+   * @openapi
+   * /plugin-api/container-files/containers/{sessionId}/{containerId}/mounts:
+   *   get:
+   *     summary: "List the mounts of a container"
+   *     tags:
+   *       - Container Files
+   *     parameters:
+   *       - { name: sessionId, in: path, required: true, schema: { type: string } }
+   *       - { name: containerId, in: path, required: true, schema: { type: string } }
+   *     responses:
+   *       200:
+   *         description: "mounts: type (bind, volume or tmpfs), source, destination, readOnly and name (volumes); empty when the engine reports none"
+   *       400:
+   *         description: "Invalid container ID, or session not found"
+   *       404:
+   *         description: "Container not found"
+   *       500:
+   *         description: "Read failed"
+   */
+  router.get("/containers/:sessionId/:containerId/mounts", async (req, res) => {
+    const session = sessionOf(req, res);
+    if (!session) return;
+    const signal = abortOnClose(req, res);
+    try {
+      const mounts = await sessions.run(session, async () => {
+        await getContainerState(session, req.params.containerId, { signal });
+        return getMounts(session, req.params.containerId, signal);
+      });
+      res.json({ mounts });
+    } catch (error) {
+      fail(res, error, "Failed to read mounts");
+    }
+  });
+
   const listCache = new Map<
     string,
     { at: number; payload: Awaited<ReturnType<typeof listDirectory>> }
@@ -717,6 +793,7 @@ export function registerRoutes(
   };
 
   const dropListings = (session: ContainerSession) => {
+    dropArchiveCache(session.client);
     for (const key of listCache.keys()) {
       if (key.startsWith(`${session.id}\0`)) listCache.delete(key);
     }
@@ -856,14 +933,14 @@ export function registerRoutes(
    *     parameters:
    *       - { name: sessionId, in: path, required: true, schema: { type: string } }
    *       - { name: containerId, in: path, required: true, schema: { type: string } }
-   *       - { name: op, in: path, required: true, schema: { type: string, enum: [mkdir, create, rename, move, copy, delete, chmod, chown, symlink, compress, extract, extract-entries, sha256] } }
+   *       - { name: op, in: path, required: true, schema: { type: string, enum: [mkdir, create, rename, move, copy, delete, chmod, chown, symlink, compress, append, extract, extract-entries, extract-plan, archive-delete, sha256, du] } }
    *     requestBody:
    *       required: true
    *       content:
    *         application/json:
    *           schema:
    *             type: object
-   *             description: "Fields depend on op: path (mkdir, create, chmod, chown, symlink, sha256), from and to (rename, move, copy), paths (delete), overwrite, recursive, mode, owner, scope, target and force (symlink), dir, names, out and format (compress), archive, dest and entries (extract, extract-entries), opId (compress and extract progress)"
+   *             description: "Fields depend on op: path (mkdir, create, chmod, chown, symlink, sha256), from and to (rename, move, copy), paths (delete, du), overwrite, recursive, mode, owner, scope, target and force (symlink), dir, names, out and format (compress), archive, dest and entries (extract, extract-entries; skip and renames in place of overwrite when some names already exist: names to leave out and name -> new name; the extraction is staged and then placed), archive and entries (extract-plan: answers data.items [{name, isDirectory}], the top level names an extraction creates), archive, dir and names (append: add files to an existing archive; fails with code APPEND_UNSUPPORTED when the container cannot), archive and entries (archive-delete: delete entries and folders from an archive in place; fails with code DELETE_UNSUPPORTED when the container or the format cannot, ARCHIVE_WOULD_BE_EMPTY when nothing would remain), opId (compress, append, archive-delete and extract progress)"
    *             properties:
    *               path: { type: string }
    *               from: { type: string }
@@ -873,7 +950,7 @@ export function registerRoutes(
    *               opId: { type: string }
    *     responses:
    *       200:
-   *         description: "success is true; sha256 operations also return sha256"
+   *         description: "success is true; sha256 operations also return sha256 and du returns bytes, the content size of paths (0 when unknown)"
    *       400:
    *         description: "Missing or invalid field, or session not found"
    *       404:
@@ -892,11 +969,19 @@ export function registerRoutes(
         const t = await targetOf(session, containerId, signal);
         // A client-chosen `opId` makes compress / extract report progress.
         const tracked =
-          op === "compress" || op === "extract" || op === "extract-entries"
+          op === "compress" ||
+          op === "append" ||
+          op === "archive-delete" ||
+          op === "extract" ||
+          op === "extract-entries"
             ? opProgress.start(
                 b.opId,
                 session.userId,
-                op === "compress" ? "compress" : "extract",
+                op === "archive-delete"
+                  ? "delete"
+                  : op === "compress" || op === "append"
+                    ? op
+                    : "extract",
               )
             : undefined;
         const o = { signal, progress: tracked };
@@ -985,11 +1070,48 @@ export function registerRoutes(
               await compress(t, dir, names, out, format, o);
               return { detail: out };
             }
+            case "append": {
+              const archive = safePath(b.archive);
+              const dir = safePath(b.dir);
+              if (!Array.isArray(b.names))
+                throw new HttpError(400, "names is required");
+              await appendToArchive(t, archive, dir, b.names.map(safeName), o);
+              return { detail: archive };
+            }
+            case "archive-delete": {
+              const archive = safePath(b.archive);
+              if (!Array.isArray(b.entries)) {
+                throw new HttpError(400, "entries is required");
+              }
+              await deleteFromArchive(t, archive, b.entries.map(innerPath), o);
+              return { detail: archive };
+            }
             case "extract": {
               const archive = safePath(b.archive);
               const dest = safePath(b.dest);
-              await extract(t, archive, dest, flag(b.overwrite), o);
+              const policy = parseExtractPolicy(b);
+              if (policy) {
+                await extractWithPolicy(
+                  t,
+                  dest,
+                  policy,
+                  (stage) => extract(t, archive, stage, true, o),
+                  signal,
+                );
+              } else {
+                await extract(t, archive, dest, flag(b.overwrite), o);
+              }
               return { detail: dest };
+            }
+            case "extract-plan": {
+              const archive = safePath(b.archive);
+              const chosen = Array.isArray(b.entries)
+                ? b.entries.map(innerPath)
+                : null;
+              return {
+                detail: archive,
+                data: await extractPlanItems(t, archive, chosen, signal),
+              };
             }
             case "extract-entries": {
               const archive = safePath(b.archive);
@@ -998,15 +1120,43 @@ export function registerRoutes(
                 throw new HttpError(400, "entries is required");
               }
               const entries = b.entries.map(innerPath);
-              await extractArchiveEntries(
-                t,
-                archive,
-                dest,
-                entries,
-                flag(b.overwrite),
-                signal,
-                tracked,
-              );
+              const policy = parseExtractPolicy(b);
+              if (policy) {
+                // Skipped entries are not extracted at all.
+                const skipped = new Set(policy.skip);
+                const wanted = entries.filter(
+                  (e) => !skipped.has(e.slice(e.lastIndexOf("/") + 1)),
+                );
+                if (wanted.length === 0) {
+                  throw new HttpError(400, "Nothing to extract");
+                }
+                await extractWithPolicy(
+                  t,
+                  dest,
+                  { ...policy, skip: [] },
+                  (stage) =>
+                    extractArchiveEntries(
+                      t,
+                      archive,
+                      stage,
+                      wanted,
+                      true,
+                      signal,
+                      tracked,
+                    ),
+                  signal,
+                );
+              } else {
+                await extractArchiveEntries(
+                  t,
+                  archive,
+                  dest,
+                  entries,
+                  flag(b.overwrite),
+                  signal,
+                  tracked,
+                );
+              }
               return { detail: `${archive} -> ${dest}` };
             }
             case "sha256": {
@@ -1014,6 +1164,20 @@ export function registerRoutes(
               return {
                 detail: path,
                 data: { sha256: await sha256(t, path, o) },
+              };
+            }
+            case "du": {
+              if (
+                !Array.isArray(b.paths) ||
+                b.paths.length === 0 ||
+                b.paths.length > 10_000
+              ) {
+                throw new HttpError(400, "paths is required");
+              }
+              const paths = b.paths.map(safePath);
+              return {
+                detail: paths.join(", "),
+                data: { bytes: await duBytes(t, paths, signal) },
               };
             }
             default:
@@ -1026,7 +1190,7 @@ export function registerRoutes(
           tracked?.finish();
         }
       });
-      if (op !== "sha256") {
+      if (op !== "sha256" && op !== "du" && op !== "extract-plan") {
         dropListings(session);
         audit(session, op, containerId, result.detail);
       }
@@ -1308,6 +1472,10 @@ export function registerRoutes(
     } catch (error) {
       return fail(res, error, "Download failed");
     }
+    // A client that leaves while the channel is still opening must not leave it behind.
+    res.on("close", () => {
+      if (!res.writableFinished) transfer.controller.abort();
+    });
     try {
       const path = safePath(req.query.path);
       const kind = req.query.kind === "directory" ? "directory" : "file";
@@ -1344,6 +1512,7 @@ export function registerRoutes(
    *       - { name: overwrite, in: query, required: false, schema: { type: string } }
    *       - { name: mode, in: query, required: false, schema: { type: string, pattern: "^[0-7]{3,4}$" } }
    *       - { name: mtime, in: query, required: false, schema: { type: number } }
+   *       - { name: size, in: query, required: false, schema: { type: integer }, description: "Byte count used when the request has no Content-Length" }
    *       - { name: transferId, in: query, required: false, schema: { type: string } }
    *     requestBody:
    *       required: true
@@ -1366,7 +1535,9 @@ export function registerRoutes(
     const userId = session.userId;
     let transfer;
     try {
-      const length = Number(req.headers["content-length"]);
+      const length = Number(
+        req.headers["content-length"] ?? sizeParam(req.query.size),
+      );
       transfer = transfers.start(
         req.query.transferId,
         userId,
@@ -1398,6 +1569,7 @@ export function registerRoutes(
           rel: typeof req.query.rel === "string" ? req.query.rel : undefined,
           overwrite: flag(req.query.overwrite),
           mode,
+          size: sizeParam(req.query.size),
           mtime:
             Number.isFinite(mtimeSec) && mtimeSec > 0
               ? new Date(mtimeSec * 1000)

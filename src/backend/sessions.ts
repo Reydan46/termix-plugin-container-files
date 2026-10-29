@@ -4,6 +4,7 @@ import type { ContainerRuntime } from "./shell-quote.js";
 import type { Logger } from "./helpers.js";
 import type { Capabilities } from "./capabilities.js";
 import type { ContainerState } from "./containers.js";
+import type { ContainerMount } from "./mounts.js";
 
 const SESSION_IDLE_MS = 60 * 60 * 1000;
 const PENDING_SWEEP_MS = 60 * 1000;
@@ -23,6 +24,8 @@ export interface ContainerSession {
   cancelIdle?: () => void;
   /** Short-lived inspect results by container id. */
   states: Map<string, { at: number; state: ContainerState }>;
+  /** Short-lived mount lists by container id. */
+  mounts: Map<string, { at: number; mounts: ContainerMount[] }>;
   /** Probe results by container id and running flag. */
   capabilities: Map<string, Capabilities>;
 }
