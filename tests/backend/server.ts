@@ -59,6 +59,8 @@ export interface RawResponse {
 
 export interface TestServer {
   mock: MockPluginContext;
+  /** Absolute URL of a path on this server. */
+  url: (path: string) => string;
   client: FakeClient;
   request: (
     method: string,
@@ -112,6 +114,7 @@ export async function startServer(
 
   return {
     mock,
+    url,
     client,
     async request(method, path, { user = "user-1", body } = {}) {
       const response = await fetch(url(path), {

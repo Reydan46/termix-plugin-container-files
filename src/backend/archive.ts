@@ -5,6 +5,20 @@ import type { FileEntry, ListTarget } from "./fs-list.js";
 import { HttpError } from "./helpers.js";
 import { execScriptCommand } from "./shell-quote.js";
 import {
+  archiveKind,
+  isSingleFile,
+  lowerName,
+  matchesPatterns,
+  missingGroup,
+  PICK_FN,
+  pickOrFail,
+  RAR_TOOLS,
+  readTools,
+  SEVENZ_TOOLS,
+  ZIP_PATTERN,
+  type ArchiveKind,
+} from "./archive-kinds.js";
+import {
   parseDuKb,
   probe,
   watchProgress,
@@ -13,8 +27,8 @@ import {
 
 /**
  * Read-only browsing of archives that sit in the container: the archive is
- * listed once with the container's own tar/unzip, parsed here and cached for a
- * short time. Nothing is extracted and no path from the archive is ever put
+ * listed once with the container's own tar/unzip/7z/unrar, parsed here and
+ * cached for a short time. Nothing is extracted and no path from the archive is ever put
  * into a shell command except as a positional argument that must match a
  * listed entry.
  */
@@ -22,11 +36,13 @@ import {
 export const ARCHIVE_MAX_ENTRIES = 100_000;
 export const ARCHIVE_ENTRY_MAX_BYTES = 64 * 1024 * 1024;
 const LIST_MAX_BYTES = 48 * 1024 * 1024;
-const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_MS = 5 * 60_000;
+/** Within this window a cached listing is reused without re-checking the file. */
+const FRESH_MS = 2_000;
 const CACHE_MAX_ARCHIVES = 6;
 const ARCHIVE_TIMEOUT_MS = 2 * 60 * 1000;
 
-export type ArchiveKind = "zip" | "tar" | "tgz" | "tbz" | "txz";
+export { archiveKind, type ArchiveKind };
 
 export interface ArchiveEntry {
   /** The name exactly as stored in the archive (used to extract it). */
@@ -49,16 +65,6 @@ export interface ArchiveListing {
   /** More than ARCHIVE_MAX_ENTRIES entries: the rest is not shown. */
   truncated: boolean;
   total: number;
-}
-
-export function archiveKind(path: string): ArchiveKind | null {
-  const p = path.toLowerCase();
-  if (p.endsWith(".zip")) return "zip";
-  if (p.endsWith(".tar.gz") || p.endsWith(".tgz")) return "tgz";
-  if (p.endsWith(".tar.bz2") || p.endsWith(".tbz2")) return "tbz";
-  if (p.endsWith(".tar.xz") || p.endsWith(".txz")) return "txz";
-  if (p.endsWith(".tar")) return "tar";
-  return null;
 }
 
 /** Normalizes a path inside an archive: absolute, no "." / ".." / trailing "/". */
@@ -187,6 +193,113 @@ export function parseZipListing(output: string): ArchiveEntry[] {
   return entries;
 }
 
+const PERMS = /(?:^|[\s_])([-dlcbps][-rwxsStT]{9})$/;
+const SEVENZ_WHEN = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/;
+
+function fieldBlocks(output: string): Map<string, string>[] {
+  return output
+    .split(/\r?\n[ \t]*\r?\n/)
+    .map((block) => {
+      const fields = new Map<string, string>();
+      for (const line of block.split(/\r?\n/)) {
+        const i = line.indexOf(" = ");
+        if (i > 0) fields.set(line.slice(0, i), line.slice(i + 3));
+        else if (line.endsWith(" =")) fields.set(line.slice(0, -2), "");
+      }
+      return fields;
+    })
+    .filter((fields) => fields.has("Path"));
+}
+
+/** Parses `7z l -slt -ba` output: one `Key = Value` block per entry. */
+export function parseSevenZipListing(output: string): ArchiveEntry[] {
+  const entries: ArchiveEntry[] = [];
+  for (const f of fieldBlocks(output)) {
+    const name = f.get("Path")!;
+    const path = normalizeEntryName(name);
+    if (!path) continue;
+    const attrs = f.get("Attributes") ?? "";
+    const perms = PERMS.exec(attrs)?.[1];
+    const link = f.get("Symbolic Link") || undefined;
+    const dir =
+      f.get("Folder") === "+" || /^D/.test(attrs) || perms?.[0] === "d";
+    const when = SEVENZ_WHEN.exec(f.get("Modified") ?? "");
+    entries.push({
+      raw: name,
+      path,
+      type: dir
+        ? "directory"
+        : link || perms?.[0] === "l"
+          ? "link"
+          : perms && !"-h".includes(perms[0])
+            ? "other"
+            : "file",
+      size: dir ? 0 : Number(f.get("Size")) || 0,
+      mtime: when ? parseWhen(when[1], when[2]) : 0,
+      mode: perms ? modeFrom(perms) : dir ? 0o755 : 0o644,
+      owner: "",
+      group: "",
+      ...(link ? { linkTarget: link } : {}),
+    });
+  }
+  return entries;
+}
+
+const UNRAR_FIELD = /^\s*(Name|Type|Size|mtime|Attributes):\s?(.*)$/;
+
+/** Parses `unrar lt` output: a `Name:` line starts each entry. */
+export function parseUnrarListing(output: string): ArchiveEntry[] {
+  const entries: ArchiveEntry[] = [];
+  let current: Map<string, string> | undefined;
+  const flush = () => {
+    const name = current?.get("Name");
+    const path = name === undefined ? null : normalizeEntryName(name);
+    if (!current || name === undefined || !path) return;
+    const type = current.get("Type") ?? "";
+    const perms = PERMS.exec(current.get("Attributes") ?? "")?.[1];
+    const dir = /dir/i.test(type) || perms?.[0] === "d";
+    const link = /link/i.test(type) || perms?.[0] === "l";
+    const when = SEVENZ_WHEN.exec(current.get("mtime") ?? "");
+    entries.push({
+      raw: name,
+      path,
+      type: dir ? "directory" : link ? "link" : "file",
+      size: dir ? 0 : Number(current.get("Size")) || 0,
+      mtime: when ? parseWhen(when[1], when[2]) : 0,
+      mode: perms ? modeFrom(perms) : dir ? 0o755 : 0o644,
+      owner: "",
+      group: "",
+    });
+  };
+  for (const line of output.split(/\r?\n/)) {
+    const m = UNRAR_FIELD.exec(line);
+    if (!m) continue;
+    if (m[1] === "Name") {
+      flush();
+      current = new Map();
+    }
+    current?.set(m[1], m[2]);
+  }
+  flush();
+  return entries;
+}
+
+/** Picks the parser for what the listing script printed for this kind. */
+export function parseArchiveListing(
+  kind: ArchiveKind,
+  text: string,
+): ArchiveEntry[] {
+  if (kind === "zip") return parseZipListing(text);
+  if (kind === "7z") return parseSevenZipListing(text);
+  if (kind === "rar") {
+    // 7z and unrar both read rar files and print differently.
+    return /^Path = /m.test(text)
+      ? parseSevenZipListing(text)
+      : parseUnrarListing(text);
+  }
+  return parseTarListing(text);
+}
+
 /** The entries directly inside `dir`, with folders implied by deeper paths. */
 export function childrenOf(entries: ArchiveEntry[], dir: string): FileEntry[] {
   const prefix = dir === "/" ? "/" : `${dir}/`;
@@ -236,78 +349,174 @@ function folderEntry(name: string, mtime: number): FileEntry {
 
 // ---- running tar / unzip ---------------------------------------------------
 
-function toolFor(kind: ArchiveKind): "unzip" | "tar" {
-  return kind === "zip" ? "unzip" : "tar";
-}
-
 function requireTool(t: ListTarget, kind: ArchiveKind): void {
   requireExec(t);
-  const tool = toolFor(kind);
-  if (!t.capabilities.tools.includes(tool)) {
+  const missing = missingGroup(t.capabilities.tools, readTools(kind));
+  if (missing) {
     throw new HttpError(
       501,
-      `${tool} is not installed in this container, so archives of this type cannot be opened`,
+      `${missing.label} is not installed in this container, so archives of this type cannot be opened`,
       "NO_TOOL",
+      { tool: missing.label },
     );
   }
 }
 
-const LIST_SCRIPT = `case "$1" in
-  *.zip|*.ZIP) unzip -l "$1" ;;
-  *.tar.gz|*.tgz|*.TGZ|*.TAR.GZ) tar -tvzf "$1" ;;
-  *.tar.bz2|*.tbz2|*.TAR.BZ2) tar -tvjf "$1" ;;
-  *.tar.xz|*.txz|*.TAR.XZ) tar -tvJf "$1" ;;
+// The kind comes from the lowercased name, so ".ZIP" and ".Tar.Gz" work too.
+// 7z and rar are run with stdin closed: they never wait for input.
+const LIST_SCRIPT = `${lowerName("$1")}
+${PICK_FN}
+case "$k" in
+  ${ZIP_PATTERN}) unzip -l "$1" ;;
+  *.tar.gz|*.tgz) tar -tvzf "$1" ;;
+  *.tar.bz2|*.tbz2|*.tbz) tar -tvjf "$1" ;;
+  *.tar.xz|*.txz) tar -tvJf "$1" ;;
+  *.tar.zst|*.tzst) zstd -dc -- "$1" | tar -tvf - ;;
+  *.7z)
+    ${pickOrFail("7z", SEVENZ_TOOLS)}
+    "$s" l -slt -ba -- "$1" </dev/null ;;
+  *.rar)
+    ${pickOrFail("unrar", RAR_TOOLS)}
+    case "$s" in
+      unrar) unrar lt -p- -- "$1" </dev/null ;;
+      *) "$s" l -slt -ba -- "$1" </dev/null ;;
+    esac ;;
   *) tar -tvf "$1" ;;
 esac`;
 
-const CAT_SCRIPT = `case "$1" in
-  *.zip|*.ZIP) unzip -p "$1" "$2" ;;
-  *.tar.gz|*.tgz|*.TGZ|*.TAR.GZ) tar -xOzf "$1" -- "$2" ;;
-  *.tar.bz2|*.tbz2|*.TAR.BZ2) tar -xOjf "$1" -- "$2" ;;
-  *.tar.xz|*.txz|*.TAR.XZ) tar -xOJf "$1" -- "$2" ;;
+const CAT_SCRIPT = `${lowerName("$1")}
+${PICK_FN}
+case "$k" in
+  ${ZIP_PATTERN}) unzip -p "$1" "$2" ;;
+  *.tar.gz|*.tgz) tar -xOzf "$1" -- "$2" ;;
+  *.tar.bz2|*.tbz2|*.tbz) tar -xOjf "$1" -- "$2" ;;
+  *.tar.xz|*.txz) tar -xOJf "$1" -- "$2" ;;
+  *.tar.zst|*.tzst) zstd -dc -- "$1" | tar -xOf - -- "$2" ;;
+  *.7z)
+    ${pickOrFail("7z", SEVENZ_TOOLS)}
+    "$s" e -so -y -- "$1" "$2" </dev/null ;;
+  *.rar)
+    ${pickOrFail("unrar", RAR_TOOLS)}
+    case "$s" in
+      unrar) unrar p -inul -p- -- "$1" "$2" </dev/null ;;
+      *) "$s" e -so -y -- "$1" "$2" </dev/null ;;
+    esac ;;
   *) tar -xOf "$1" -- "$2" ;;
 esac`;
 
 interface Cached {
+  /** When the listing was parsed. */
   at: number;
+  /** When mtime and size were last confirmed against the archive file. */
+  checkedAt: number;
+  mtime: number;
+  size: number;
   entries: ArchiveEntry[];
   truncated: boolean;
   total: number;
 }
 
-const caches = new WeakMap<object, Map<string, Cached>>();
+interface PerClient {
+  /** Key: container + archive path. One slot per archive (least recently used). */
+  done: Map<string, Cached>;
+  /** Listings being read right now, so parallel requests share one scan. */
+  running: Map<string, Promise<Cached>>;
+}
+
+const caches = new WeakMap<object, PerClient>();
+let generation = 0;
 
 /** For tests. */
 export function clearArchiveCache(): void {
   // WeakMap has no clear(); a generation counter invalidates every entry.
   generation += 1;
 }
-let generation = 0;
 
-async function loadEntries(
+/** Forgets every cached archive listing of one SSH client (after writes). */
+export function dropArchiveCache(client: object): void {
+  caches.delete(client);
+}
+
+function slotsOf(client: object): PerClient {
+  let slots = caches.get(client);
+  if (!slots) {
+    slots = { done: new Map(), running: new Map() };
+    caches.set(client, slots);
+  }
+  return slots;
+}
+
+export async function loadEntries(
   t: ListTarget,
   archive: string,
   kind: ArchiveKind,
   signal?: AbortSignal,
 ): Promise<Cached> {
   requireTool(t, kind);
+  const slots = slotsOf(t.client);
+  const slot = `${generation}|${t.containerId}|${archive}`;
+  const hit = slots.done.get(slot);
+  const now = Date.now();
+  // Just confirmed: browsing inside the archive needs no further round trip.
+  if (hit && now - hit.at < CACHE_TTL_MS && now - hit.checkedAt < FRESH_MS) {
+    touch(slots.done, slot, hit);
+    return hit;
+  }
   const stat = await statPath(t, archive, { signal });
   if (stat.type === "directory") {
     throw new HttpError(400, "Not an archive file", "NOT_A_FILE");
   }
-  const key = `${generation}|${t.containerId}|${archive}|${stat.mtime}|${stat.size}`;
-  let perClient = caches.get(t.client);
-  if (!perClient) {
-    perClient = new Map();
-    caches.set(t.client, perClient);
+  if (
+    hit &&
+    Date.now() - hit.at < CACHE_TTL_MS &&
+    hit.mtime === stat.mtime &&
+    hit.size === stat.size
+  ) {
+    hit.checkedAt = Date.now();
+    touch(slots.done, slot, hit);
+    return hit;
   }
-  const hit = perClient.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit;
+  const runKey = `${slot}|${stat.mtime}|${stat.size}`;
+  let pending = slots.running.get(runKey);
+  if (!pending) {
+    pending = readListing(t, archive, kind, stat.mtime, stat.size).finally(() =>
+      slots.running.delete(runKey),
+    );
+    slots.running.set(runKey, pending);
+    // Never leave an unhandled rejection if every waiter went away.
+    pending.catch(() => undefined);
+  }
+  const cached = await pending;
+  for (const [k, v] of slots.done) {
+    if (Date.now() - v.at >= CACHE_TTL_MS) slots.done.delete(k);
+  }
+  slots.done.delete(slot);
+  while (slots.done.size >= CACHE_MAX_ARCHIVES) {
+    const oldest = slots.done.keys().next().value;
+    if (oldest === undefined) break;
+    slots.done.delete(oldest);
+  }
+  slots.done.set(slot, cached);
+  return cached;
+}
 
+function touch(map: Map<string, Cached>, key: string, value: Cached): void {
+  map.delete(key);
+  map.set(key, value);
+}
+
+async function readListing(
+  t: ListTarget,
+  archive: string,
+  kind: ArchiveKind,
+  mtime: number,
+  size: number,
+): Promise<Cached> {
+  // Not tied to one caller's signal: other requests may be sharing this scan.
   const result = await runCommand(
     t.client,
     execScriptCommand(t.runtime, t.containerId, LIST_SCRIPT, [archive]),
-    { signal, maxBytes: LIST_MAX_BYTES, timeoutMs: ARCHIVE_TIMEOUT_MS },
+    { maxBytes: LIST_MAX_BYTES, timeoutMs: ARCHIVE_TIMEOUT_MS },
   ).catch((e) => {
     if (e instanceof HttpError && e.code === "TOO_LARGE") {
       throw new HttpError(413, "The archive has too many entries", "TOO_LARGE");
@@ -316,29 +525,30 @@ async function loadEntries(
   });
   if (result.code !== 0) throw errorFromResult(result);
   const text = result.stdout.toString("utf8");
-  const parsed = kind === "zip" ? parseZipListing(text) : parseTarListing(text);
+  const parsed = parseArchiveListing(kind, text);
   const total = parsed.length;
-  const cached: Cached = {
-    at: Date.now(),
+  const at = Date.now();
+  return {
+    at,
+    checkedAt: at,
+    mtime,
+    size,
     entries: parsed.slice(0, ARCHIVE_MAX_ENTRIES),
     truncated: total > ARCHIVE_MAX_ENTRIES,
     total,
   };
-  for (const [k, v] of perClient) {
-    if (Date.now() - v.at >= CACHE_TTL_MS) perClient.delete(k);
-  }
-  while (perClient.size >= CACHE_MAX_ARCHIVES) {
-    const oldest = perClient.keys().next().value;
-    if (oldest === undefined) break;
-    perClient.delete(oldest);
-  }
-  perClient.set(key, cached);
-  return cached;
 }
 
-function kindOf(archive: string): ArchiveKind {
+export function kindOf(archive: string): ArchiveKind {
   const kind = archiveKind(archive);
   if (!kind) throw new HttpError(400, "Unsupported archive type");
+  if (isSingleFile(kind)) {
+    throw new HttpError(
+      400,
+      "This file is compressed as a whole and has no entries to browse; extract it instead",
+      "NOT_BROWSABLE",
+    );
+  }
   return kind;
 }
 
@@ -395,7 +605,7 @@ export async function readArchiveEntry(
   if (entry.size > maxBytes) {
     throw new HttpError(413, "File too large", "TOO_LARGE");
   }
-  if (entry.raw.startsWith("-")) {
+  if (entry.raw.startsWith("-") || patternName(kind, entry.raw)) {
     throw new HttpError(400, "Unsupported entry name");
   }
   // unzip treats [ ] * ? as patterns in member names; match literally.
@@ -413,6 +623,14 @@ export async function readArchiveEntry(
 // ---- selective extraction ---------------------------------------------------
 
 export const EXTRACT_MAX_ENTRIES = 500;
+
+/**
+ * 7z and unrar read member names as patterns (`*`, `?`, and `@` for a list
+ * file); such names cannot be passed on safely.
+ */
+export function patternName(kind: ArchiveKind, raw: string): boolean {
+  return matchesPatterns(kind) && (/[*?]/.test(raw) || raw.startsWith("@"));
+}
 
 // Mirrors the shell `rel` function of EXTRACT_SCRIPT.
 function shellRel(raw: string): string {
@@ -432,6 +650,7 @@ function shellRel(raw: string): string {
 export function resolveMembers(
   entries: ArchiveEntry[],
   chosen: string[],
+  kind?: ArchiveKind,
 ): string[] {
   const unique = [...new Set(chosen)].sort((a, b) => a.length - b.length);
   const roots: string[] = [];
@@ -460,6 +679,7 @@ export function resolveMembers(
       raw.startsWith("-") ||
       raw.startsWith("/") ||
       /[\0\n]/.test(raw) ||
+      (kind !== undefined && patternName(kind, raw)) ||
       raw.split("/").includes("..") ||
       shellRel(raw) !== p.slice(1)
     ) {
@@ -489,9 +709,7 @@ export function resolveMembers(
 // entries is written and no archive path can escape the destination.
 const EXTRACT_EXISTS = 17;
 const EXTRACT_TIMEOUT_MS = 10 * 60 * 1000;
-const EXTRACT_SCRIPT = `a=$1; d=$2; ow=$3; shift 3
-mkdir -p -- "$d" || exit 1
-rel() {
+export const REL_FN = `rel() {
   r=$1
   while :; do
     case $r in
@@ -501,7 +719,13 @@ rel() {
     esac
   done
   printf '%s' "$r"
-}
+}`;
+
+const EXTRACT_SCRIPT = `a=$1; d=$2; ow=$3; shift 3
+mkdir -p -- "$d" || exit 1
+${REL_FN}
+${PICK_FN}
+${lowerName("$a")}
 if [ "$ow" != 1 ]; then
   for m in "$@"; do
     r=$(rel "$m"); b=\${r##*/}
@@ -519,11 +743,27 @@ zipx() {
   shift "$n"
   unzip -o -q "$a" -d "$t" "$@"
 }
-case "$a" in
-  *.zip|*.ZIP) zipx "$@" || exit $? ;;
-  *.tar.gz|*.tgz|*.TGZ|*.TAR.GZ) tar -xzf "$a" -C "$t" -- "$@" || exit $? ;;
-  *.tar.bz2|*.tbz2|*.TAR.BZ2) tar -xjf "$a" -C "$t" -- "$@" || exit $? ;;
-  *.tar.xz|*.txz|*.TAR.XZ) tar -xJf "$a" -C "$t" -- "$@" || exit $? ;;
+rarx() {
+  n=$#
+  for m in "$@"; do set -- "$@" "$m" "$m/*"; done
+  shift "$n"
+  unrar x -y -o+ -p- -idq -- "$a" "$@" "$t/" </dev/null
+}
+case "$k" in
+  ${ZIP_PATTERN}) zipx "$@" || exit $? ;;
+  *.tar.gz|*.tgz) tar -xzf "$a" -C "$t" -- "$@" || exit $? ;;
+  *.tar.bz2|*.tbz2|*.tbz) tar -xjf "$a" -C "$t" -- "$@" || exit $? ;;
+  *.tar.xz|*.txz) tar -xJf "$a" -C "$t" -- "$@" || exit $? ;;
+  *.tar.zst|*.tzst) zstd -dc -- "$a" | tar -xf - -C "$t" -- "$@" || exit $? ;;
+  *.7z)
+    ${pickOrFail("7z", SEVENZ_TOOLS)}
+    "$s" x -y -o"$t" -- "$a" "$@" </dev/null >/dev/null || exit $? ;;
+  *.rar)
+    ${pickOrFail("unrar", RAR_TOOLS)}
+    case "$s" in
+      unrar) rarx "$@" || exit $? ;;
+      *) "$s" x -y -o"$t" -- "$a" "$@" </dev/null >/dev/null || exit $? ;;
+    esac ;;
   *) tar -xf "$a" -C "$t" -- "$@" || exit $? ;;
 esac
 for m in "$@"; do
@@ -557,7 +797,7 @@ export async function extractArchiveEntries(
   progress?.setStage("preparing");
   const kind = kindOf(archive);
   const cached = await loadEntries(t, archive, kind, signal);
-  const members = resolveMembers(cached.entries, chosen);
+  const members = resolveMembers(cached.entries, chosen, kind);
   let stopWatching: (() => void) | undefined;
   if (progress) {
     const roots = [...new Set(chosen)];

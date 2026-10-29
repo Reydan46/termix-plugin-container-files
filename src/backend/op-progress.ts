@@ -5,14 +5,19 @@ import { execScriptCommand } from "./shell-quote.js";
 
 /** Where a long archive operation currently is. */
 export type OpStage =
-  "preparing" | "scanning" | "packing" | "extracting" | "finishing";
+  | "preparing"
+  | "scanning"
+  | "packing"
+  | "extracting"
+  | "rewriting"
+  | "finishing";
 
 export type OpStatus = "running" | "done" | "error" | "cancelled";
 
 /** What `GET /operations/:id` reports. */
 export interface OpProgressView {
   id: string;
-  kind: "compress" | "extract";
+  kind: "compress" | "extract" | "append" | "delete";
   status: OpStatus;
   stage: OpStage;
   /** Bytes done so far, when it can be measured. */
@@ -38,7 +43,7 @@ export class OpProgress {
   constructor(
     readonly id: string,
     readonly userId: string,
-    readonly kind: "compress" | "extract",
+    readonly kind: "compress" | "extract" | "append" | "delete",
   ) {}
 
   setStage(stage: OpStage): void {

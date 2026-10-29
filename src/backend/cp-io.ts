@@ -132,6 +132,7 @@ export async function cpUpload(
     t.client,
     cpToCommand(t.runtime, t.containerId, dir),
     signal,
+    true,
   );
   const stderr = { text: "" };
   const done = channelDone(channel, stderr);
@@ -140,6 +141,8 @@ export async function cpUpload(
     channel.destroy();
   };
   signal?.addEventListener("abort", onAbort, { once: true });
+  // A cancel between the channel opening and this line fired no event.
+  if (signal?.aborted) onAbort();
   let sourceError: Error | undefined;
   archive.on("error", (e) => {
     sourceError = e;

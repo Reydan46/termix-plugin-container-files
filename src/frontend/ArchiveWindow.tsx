@@ -9,6 +9,7 @@ import {
   Info,
   Link2,
   PackageOpen,
+  Trash2,
 } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { formatFileSize } from "./vendor/file-manager/file-manager-utils";
@@ -16,8 +17,11 @@ import {
   isLocalFilesDrag,
   isRemoteFilesDrag,
 } from "./vendor/file-manager/local-transfer-utils";
+import { appendDragPaths } from "./appendHelpers";
+import { getActiveDrag } from "./workspace/dragRegistry";
 import { dragWithOverlay } from "./popup/dragOverlay";
 import { listArchiveEntries, type WireEntry } from "./containerFsApi";
+import { subscribeArchiveChanged } from "./archiveRefresh";
 import {
   ARCHIVE_ENTRIES_MIME,
   clearArchiveDrag,
@@ -27,6 +31,7 @@ import {
   extensionOf,
   innerCrumbs,
   isDirEntry,
+  keepExisting,
   sortEntries,
   summarize,
   type SortDir,
@@ -66,6 +71,10 @@ export function ArchiveWindow({
   archiveName,
   onExtractSelected,
   onExtractAll,
+  onAppendDrop,
+  appendBlock,
+  onDeleteSelected,
+  deleteBlock,
 }: {
   containerKey: string;
   containerId: string;
@@ -75,6 +84,14 @@ export function ArchiveWindow({
   onExtractSelected: (entries: string[]) => void;
   /** Opens the destination picker for the whole archive. */
   onExtractAll: () => void;
+  /** Adds these container paths (dropped on the window) to the archive. */
+  onAppendDrop?: (paths: string[]) => void;
+  /** Why files cannot be added to this archive (null: they can, or unknown). */
+  appendBlock?: string | null;
+  /** Deletes these archive-inner paths (the caller confirms and reports). */
+  onDeleteSelected?: (entries: string[]) => void | Promise<void>;
+  /** Why entries cannot be deleted from this archive (null: they can, or unknown). */
+  deleteBlock?: string | null;
 }): React.ReactElement {
   const { t } = useTranslation();
   const [dir, setDir] = React.useState("/");
@@ -89,7 +106,33 @@ export function ArchiveWindow({
   });
   const [showInfo, setShowInfo] = React.useState(false);
   const [dropOver, setDropOver] = React.useState(false);
+  const dropAllowed =
+    !!onAppendDrop && appendDragPaths(getActiveDrag(), containerId) !== null;
   const anchor = React.useRef<string | null>(null);
+  const root = React.useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = React.useState<{ x: number; y: number } | null>(null);
+  const [deleting, setDeleting] = React.useState(false);
+  // The context menu closes on any click elsewhere, on Esc and on a reload.
+  React.useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [menu]);
+  // A drag ended or cancelled (Esc) anywhere must not leave the hint behind.
+  React.useEffect(() => {
+    const clear = () => setDropOver(false);
+    window.addEventListener("dragend", clear);
+    window.addEventListener("drop", clear);
+    return () => {
+      window.removeEventListener("dragend", clear);
+      window.removeEventListener("drop", clear);
+    };
+  }, []);
   // Column widths live in this window's state only (gone with the window).
   const [widths, setWidths] = React.useState(DEFAULT_WIDTHS);
   const columnsStyle = React.useMemo<React.CSSProperties>(
@@ -116,17 +159,45 @@ export function ArchiveWindow({
   // Closing the window mid-drag must not leave the drag registered.
   React.useEffect(() => () => clearArchiveDrag(), []);
 
+  // The archive changed (files were added): load this folder again.
+  const [reloads, setReloads] = React.useState(0);
+  React.useEffect(
+    () =>
+      subscribeArchiveChanged(containerKey, archive, () =>
+        setReloads((n) => n + 1),
+      ),
+    [containerKey, archive],
+  );
+
+  const loadedFor = React.useRef("");
   React.useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    // The same folder again (a reload) keeps the list on screen, with its
+    // scroll position and selection, until the new entries arrive.
+    const where = `${containerKey}
+${archive}
+${dir}`;
+    const reload = loadedFor.current === where;
+    loadedFor.current = where;
+    if (!reload) {
+      setLoading(true);
+      setSelected(new Set());
+      anchor.current = null;
+    }
     setError("");
-    setSelected(new Set());
-    anchor.current = null;
     listArchiveEntries(containerKey, archive, dir, controller.signal)
       .then((data) => {
         setEntries(data.entries);
         setTruncated(data.truncated);
         setLoading(false);
+        if (reload) {
+          setSelected((prev) => keepExisting(prev, data.entries));
+          if (
+            anchor.current &&
+            !data.entries.some((e) => e.name === anchor.current)
+          )
+            anchor.current = null;
+        }
       })
       .catch((e: unknown) => {
         if (controller.signal.aborted) return;
@@ -134,7 +205,7 @@ export function ArchiveWindow({
         setLoading(false);
       });
     return () => controller.abort();
-  }, [containerKey, archive, dir]);
+  }, [containerKey, archive, dir, reloads]);
 
   const sorted = React.useMemo(
     () => sortEntries(entries, sort.key, sort.dir),
@@ -174,6 +245,32 @@ export function ArchiveWindow({
     }
   };
 
+  const canDelete = !!onDeleteSelected && selected.size > 0 && !deleting;
+  const deleteSelected = async () => {
+    setMenu(null);
+    if (!onDeleteSelected || selected.size === 0 || deleting) return;
+    setDeleting(true);
+    try {
+      await onDeleteSelected([...selected].map((n) => innerJoin(dir, n)));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const openMenu = (ev: React.MouseEvent, name: string) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (!selected.has(name)) {
+      anchor.current = name;
+      setSelected(new Set([name]));
+    }
+    const box = root.current?.getBoundingClientRect();
+    setMenu({
+      x: Math.max(0, ev.clientX - (box?.left ?? 0)),
+      y: Math.max(0, ev.clientY - (box?.top ?? 0)),
+    });
+  };
+
   const sortBy = (key: SortKey) =>
     setSort((s) =>
       s.key === key
@@ -206,13 +303,23 @@ export function ArchiveWindow({
       );
       anchor.current = names[next];
       setSelected(new Set([names[next]]));
+    } else if (ev.key === "Delete") {
+      ev.preventDefault();
+      void deleteSelected();
     } else if (ev.key === "Escape") {
-      setSelected(new Set());
+      if (menu) setMenu(null);
+      else setSelected(new Set());
     }
   };
 
-  // Adding files to an archive is not supported: say so instead of letting a
-  // file drag look like a download (or become one).
+  // Files of this container dropped here are added to the archive.
+  const appendable = (dt: DataTransfer | null) =>
+    !!onAppendDrop &&
+    isRemoteFilesDrag(dt) &&
+    appendDragPaths(getActiveDrag(), containerId) !== null;
+
+  // Anything else (this computer's files, OS files, another container) cannot
+  // be added: say so instead of letting the drag look like a download.
   const foreignFiles = (dt: DataTransfer | null) =>
     !!dt &&
     !dt.types.includes(ARCHIVE_ENTRIES_MIME) &&
@@ -268,16 +375,30 @@ export function ArchiveWindow({
 
   return (
     <div
+      ref={root}
       className="relative flex h-full flex-col bg-background text-xs outline-none"
       tabIndex={0}
       onKeyDown={onKeyDown}
       onDragEnter={(e) => {
+        if (appendable(e.dataTransfer)) {
+          e.preventDefault();
+          e.stopPropagation();
+          setDropOver(true);
+          return;
+        }
         if (!foreignFiles(e.dataTransfer)) return;
         e.preventDefault();
         e.stopPropagation();
         setDropOver(true);
       }}
       onDragOver={(e) => {
+        if (appendable(e.dataTransfer)) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = appendBlock ? "none" : "copy";
+          setDropOver(true);
+          return;
+        }
         if (!foreignFiles(e.dataTransfer)) return;
         e.preventDefault();
         e.stopPropagation();
@@ -290,6 +411,13 @@ export function ArchiveWindow({
       }}
       onDrop={(e) => {
         setDropOver(false);
+        if (appendable(e.dataTransfer)) {
+          e.preventDefault();
+          e.stopPropagation();
+          const paths = appendDragPaths(getActiveDrag(), containerId);
+          if (paths) onAppendDrop?.(paths);
+          return;
+        }
         if (!foreignFiles(e.dataTransfer)) return;
         // Never a download and never an upload: nothing happens.
         e.preventDefault();
@@ -320,6 +448,18 @@ export function ArchiveWindow({
         <button type="button" className={TOOLBAR_BUTTON} onClick={onExtractAll}>
           {t("containerFiles.archiveExtractAll")}
         </button>
+        {onDeleteSelected && (
+          <button
+            type="button"
+            className={TOOLBAR_BUTTON}
+            disabled={!canDelete || !!deleteBlock}
+            title={deleteBlock ?? t("containerFiles.archiveDeleteHint")}
+            onClick={() => void deleteSelected()}
+          >
+            <Trash2 className="size-3.5" />
+            {t("containerFiles.archiveDelete")}
+          </button>
+        )}
         <div className="flex-1" />
         <button
           type="button"
@@ -425,6 +565,7 @@ export function ArchiveWindow({
               }`}
               style={columnsStyle}
               onClick={(ev) => select(ev, e.name)}
+              onContextMenu={(ev) => openMenu(ev, e.name)}
               onDoubleClick={() => openEntry(e.name)}
               onDragStart={(ev) => {
                 const paths = dragPaths(e.name);
@@ -485,10 +626,65 @@ export function ArchiveWindow({
         </span>
       </div>
 
+      {menu && (
+        <div
+          role="menu"
+          className="absolute z-20 min-w-44 border border-border bg-popover py-1 text-xs shadow-md"
+          style={{ left: menu.x, top: menu.y }}
+          onMouseDown={(ev) => ev.stopPropagation()}
+          onContextMenu={(ev) => ev.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-accent disabled:opacity-40"
+            disabled={selected.size === 0}
+            onClick={() => {
+              setMenu(null);
+              extractSelected();
+            }}
+          >
+            {t("containerFiles.archiveExtractSelected")}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-accent"
+            onClick={() => {
+              setMenu(null);
+              onExtractAll();
+            }}
+          >
+            {t("containerFiles.archiveExtractAll")}
+          </button>
+          {onDeleteSelected && (
+            <>
+              <div className="my-1 h-px bg-border" />
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-destructive hover:bg-accent disabled:opacity-40"
+                disabled={!canDelete || !!deleteBlock}
+                title={deleteBlock ?? undefined}
+                onClick={() => void deleteSelected()}
+              >
+                <Trash2 className="size-3.5" />
+                {t("containerFiles.archiveDelete")}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {dropOver && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex cursor-not-allowed items-center justify-center bg-background/70">
+        <div
+          className={`pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/70 ${dropAllowed && !appendBlock ? "" : "cursor-not-allowed"}`}
+        >
           <p className="border border-border bg-card px-4 py-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-            {t("containerFiles.archiveAddUnsupported")}
+            {dropAllowed
+              ? (appendBlock ??
+                t("containerFiles.appendDropHint", { name: archiveName }))
+              : t("containerFiles.archiveAddUnsupported")}
           </p>
         </div>
       )}

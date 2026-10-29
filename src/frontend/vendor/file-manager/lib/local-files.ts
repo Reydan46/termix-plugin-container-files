@@ -4,6 +4,7 @@
 
 import { isElectron } from "@termix-ssh/plugin-sdk/ui";
 import { fileManagerApi } from "../api/client";
+import { getApp } from "../../../app";
 import type {
   LocalDirectoryListing,
   LocalFsHomeInfo,
@@ -21,7 +22,7 @@ function unwrap<T>(result: LocalFsResult<T>): T {
     const message =
       result && "error" in result && result.error
         ? result.error
-        : "Local file operation failed";
+        : getApp().t("fileManager.unknownError");
     const error = new Error(message) as Error & { code?: string };
     if (result && "code" in result) error.code = result.code;
     throw error;
@@ -34,7 +35,7 @@ async function call<T>(
   body?: Record<string, unknown>,
 ): Promise<T> {
   if (!isLocalFileBrowserAvailable()) {
-    throw new Error("Local file access is only available in the desktop app");
+    throw new Error(getApp().t("containerFiles.desktopOnly"));
   }
   const api = fileManagerApi();
   const response = body

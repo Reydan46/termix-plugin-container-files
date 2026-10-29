@@ -13,6 +13,7 @@ import {
   POPUP_BUTTON_PRIMARY,
 } from "./popup/popupStyles";
 import { ContainerConsole } from "./ContainerConsole";
+import type { Origin } from "./sessionOrigin";
 import { listFiles } from "./containerFsApi";
 import {
   TERMINAL_SHELLS,
@@ -52,7 +53,7 @@ export function TerminalWindow({
   containerId,
   dir,
   shell,
-  hostConfig,
+  origin,
   onStarted,
   onFailed,
 }: {
@@ -65,7 +66,7 @@ export function TerminalWindow({
   containerId: string;
   dir: string;
   shell: string;
-  hostConfig: unknown;
+  origin: Origin;
   onStarted?: () => void;
   /** The shell did not start; the caller offers another one. */
   onFailed?: (message?: string) => void;
@@ -108,7 +109,7 @@ export function TerminalWindow({
         containerId={containerId}
         dir={dir}
         shell={shell}
-        hostConfig={hostConfig}
+        origin={origin}
         isVisible={!current.isMinimized}
         onStarted={onStarted}
         onShell={setStarted}

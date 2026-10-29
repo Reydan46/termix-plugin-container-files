@@ -17,6 +17,8 @@ export type Feature =
   | "permissions"
   | "owner"
   | "compress"
+  | "append"
+  | "archiveDelete"
   | "extract"
   | "upload"
   | "symlink"
@@ -31,6 +33,10 @@ export const FEATURE_TOOLS: Record<Feature, string[]> = {
   permissions: ["chmod"],
   owner: ["chown"],
   compress: ["tar"],
+  // Needs zip or tar by archive type: callers pass the tool.
+  append: [],
+  // Same: the tool depends on the archive type.
+  archiveDelete: [],
   extract: ["tar"],
   upload: [],
   symlink: ["ln"],

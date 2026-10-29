@@ -1,23 +1,60 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React from "react";
 import { copyName } from "./copyName";
+import { notifyArchiveChanged } from "./archiveRefresh";
+import { archiveToolFor } from "./archiveKinds";
+import { deleteBlock, deleteErrorKey } from "./deleteHelpers";
+import {
+  appendBlock,
+  appendBlockAll,
+  appendDropHintFor,
+  appendErrorKey,
+  appendSources,
+  appendTool,
+  canAppendTo,
+} from "./appendHelpers";
+import { usePathPicker } from "./PathPickerWindow";
 import {
   containingDirectory,
   isBrowsableArchive,
   isVirtualPath,
-  isZipName,
   parentPath,
-  virtualPath,
 } from "./archivePath";
 import { toast } from "sonner";
-import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+import { useSettings, useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+import { transferConcurrency } from "./transferConcurrency";
 import { useConfirm } from "./popup/useConfirm";
+import { dialogOwnsKey } from "./popup/keyGuard";
+import { isActivePane } from "./paneFocus";
+import {
+  clipboardTimes,
+  clipboardWinner,
+  explorerPasteAction,
+  extractPasteFiles,
+  ignoresPaste,
+  isPasteKey,
+  looksLikeFolder,
+  markInternalClipboard,
+  samePaths,
+  pasteTargetDir,
+  supportsOsFileClipboard,
+  takeFolderHint,
+  trackWindowFocus,
+  typesLatinV,
+} from "./osClipboard";
+import { localPlatform, readExplorerClipboard } from "./osClipboardApi";
+import { copyToOsClipboard } from "./osClipboardCopy";
+import { clipboardErrorText } from "./osClipboardErrors";
+import { isLocalFileBrowserAvailable } from "./vendor/file-manager/lib/local-files";
+import { localBaseName } from "./workspace/localPaths";
+import { cutDimCss } from "./workspace/clipboard";
 import { usePopups } from "./popup/usePopups";
 import { popupTitle } from "./popup/popupTitle";
 import { PopupHeader } from "./popup/PopupHeader";
 import { POPUP_WIDTH, centerInPane } from "./popup/popupGeometry";
 import { CompressWindow } from "./CompressWindow";
 import { runWithProgress } from "./ArchiveProgressToast";
+import type { Origin } from "./sessionOrigin";
 import { OpCancelled } from "./archiveProgressHelpers";
 import { FileManagerGrid } from "./vendor/file-manager/FileManagerGrid";
 import { FileManagerToolbar } from "./vendor/file-manager/FileManagerToolbar";
@@ -30,6 +67,14 @@ import { ExtractWindow } from "./ExtractWindow";
 import { ArchiveWindow } from "./ArchiveWindow";
 import { useArchiveExtract } from "./useArchiveExtract";
 import { PermissionsWindow } from "./PermissionsWindow";
+import { MountsWindow } from "./MountsWindow";
+import { useMounts } from "./useMounts";
+import {
+  mountAt,
+  mountTarget,
+  mountTitle,
+  type MountMark,
+} from "./mountLookup";
 import { StatusStrip, type PanelButton } from "./StatusStrip";
 import { FileWindow } from "./vendor/file-manager/components/FileWindow";
 import {
@@ -54,7 +99,6 @@ import {
   downloadFallbackName,
   MAX_BUFFERED_DOWNLOAD,
   openDownload,
-  responseFileName,
   fetchShells,
   type ApplyScope,
   type ContainerShells,
@@ -94,7 +138,7 @@ import {
   rememberShell,
 } from "./ContainerTerminal";
 import { pickShell } from "./terminalCommand";
-import { Terminal } from "lucide-react";
+import { HardDrive, Terminal } from "lucide-react";
 import { previewVerdict } from "./mediaPreview";
 import {
   EDIT_LIMIT_MIB,
@@ -102,13 +146,7 @@ import {
   onEditRejected,
   type EditRejection,
 } from "./editGate";
-import { resolveFilePreviewKind } from "./vendor/file-manager/file-preview-preload";
-import {
-  containerName,
-  type Capabilities,
-  type ContainerInfo,
-  type Runtime,
-} from "./types";
+import { containerName, type Capabilities, type ContainerInfo } from "./types";
 
 type SortBy = "name" | "modified" | "size";
 
@@ -117,9 +155,9 @@ interface Props {
   containerId: string;
   container: ContainerInfo | null;
   isVisible: boolean;
-  runtime: Runtime | null;
   /** The SSH host record the terminal connects to. */
-  hostConfig: unknown;
+  /** The origin of the session. */
+  origin: Origin;
   /** A fresh state from polling; null when the container no longer exists. */
   onStateChange?: (state: ContainerLiveState | null) => void;
   /** Set by the multi-pane workspace; absent for a standalone manager. */
@@ -132,8 +170,6 @@ interface Clipboard {
   files: FileItem[];
   cut: boolean;
 }
-
-const TRANSFER_CONCURRENCY = 2;
 
 const ARCHIVE_EXT =
   /.(zip|tar|tgz|gz|bz2|xz|zst|7z|rar|jar|war|deb|rpm|iso|exe|dll|so|bin|class)$/i;
@@ -160,12 +196,15 @@ function Inner({
   containerId,
   container,
   isVisible,
-  runtime,
-  hostConfig,
+  origin,
   onStateChange,
   bridge,
 }: Props) {
   const { t } = useTranslation();
+  const userSettings = useSettings("user");
+  const concurrency = transferConcurrency(
+    userSettings.values.transferConcurrency,
+  );
   const initial = React.useRef(bridge?.initial).current;
   const startPath = React.useRef("/");
   const label = container ? containerName(container) : containerId.slice(0, 12);
@@ -189,6 +228,7 @@ function Inner({
     () => targetKey(sessionId, containerId),
     [sessionId, containerId],
   );
+  const pickPath = usePathPicker(key);
   // The pane closed or switched container: its windows go with it.
   React.useEffect(() => {
     const owned = ownedWindows.current;
@@ -249,6 +289,31 @@ function Inner({
 
   const running =
     liveRunning ?? (container ? container.state === "running" : true);
+
+  // Mount points: fetched once per connection, again when the container
+  // starts or stops. A failure only means there are no badges.
+  const { mounts, index: mountIndex } = useMounts(key, `${running}|${gone}`);
+  const mountMark = (path: string): MountMark | null => {
+    const mount = mountAt(mountIndex, path);
+    if (!mount) return null;
+    const typeKey = {
+      bind: "containerFiles.mountTypeBind",
+      volume: "containerFiles.mountTypeVolume",
+      tmpfs: "containerFiles.mountTypeTmpfs",
+    }[mount.type];
+    return {
+      readOnly: mount.readOnly,
+      target: mountTarget(mount),
+      label: mount.readOnly
+        ? t("containerFiles.mountRoShort")
+        : t("containerFiles.mountRwShort"),
+      title: mountTitle(
+        mount,
+        () => t("containerFiles.mountBadge", { type: t(typeKey) }),
+        { rw: t("containerFiles.mountRw"), ro: t("containerFiles.mountRo") },
+      ),
+    };
+  };
 
   // A shim host: the vendored editor window only reads display fields from it.
   const pseudoHost = React.useMemo(
@@ -326,7 +391,9 @@ function Inner({
       .then((value) => {
         if (!cancelled) setCaps(value);
       })
-      .catch(() => {});
+      .catch(() => {
+        // Without the capability list every action simply stays enabled.
+      });
     void load(startPath.current);
     return () => {
       cancelled = true;
@@ -485,6 +552,16 @@ function Inner({
     return false;
   };
 
+  // Refuses an append the probe already knows cannot work (BusyBox tar, a
+  // missing tool) before any request starts. Without a name the archive is
+  // not chosen yet: refuse only when no archive type works.
+  const appendRefused = (name?: string): boolean => {
+    const reason = name ? appendBlock(caps, name, t) : appendBlockAll(caps, t);
+    if (!reason) return false;
+    toast.error(reason);
+    return true;
+  };
+
   // ---- terminal ---------------------------------------------------------
 
   // Opens the terminal at once with the container's default shell. The shell
@@ -553,7 +630,7 @@ function Inner({
           containerId={containerId}
           dir={dir}
           shell={shell}
-          hostConfig={hostConfig}
+          origin={origin}
           onStarted={() => rememberShell(containerId, shell)}
           onFailed={(message) => {
             rememberShell(containerId, null);
@@ -585,6 +662,34 @@ function Inner({
           initial={initial}
           notice={notice}
           onOpen={(shell) => launchTerminal(dir, shell, shells)}
+        />
+      ),
+    });
+  };
+
+  // Opens a mount: a folder as is, a single-file mount at its folder.
+  const goToMount = async (destination: string) => {
+    try {
+      const info = await fsApi.stat(key, destination);
+      navigateTo(
+        info.type === "directory" ? destination : parentOf(destination),
+      );
+    } catch {
+      toast.error(t("containerFiles.mountGoToFailed"));
+    }
+  };
+
+  const openMountsWindow = () => {
+    openPopup({
+      title: t("containerFiles.mountsTitle"),
+      width: 520,
+      minWidth: 360,
+      minHeight: 120,
+      render: () => (
+        <MountsWindow
+          containerKey={key}
+          initial={mounts}
+          onGoTo={(dest) => void goToMount(dest)}
         />
       ),
     });
@@ -644,7 +749,7 @@ function Inner({
 
   // Opens an archive in a floating window; entries drag out or extract from there.
   const openArchive = (file: FileItem) => {
-    const tool = isZipName(file.name) ? "unzip" : "tar";
+    const tool = archiveToolFor(file.name, caps?.tools ?? []);
     if (caps && !caps.tools.includes(tool)) {
       toast.error(t("containerFiles.archiveNoTool", { tool }));
       return;
@@ -666,6 +771,10 @@ function Inner({
           archiveName={file.name}
           onExtractSelected={(entries) => askExtractEntries(file, entries)}
           onExtractAll={() => handleExtract(file)}
+          onAppendDrop={(paths) => void handleAppendPaths(file.path, paths)}
+          appendBlock={appendBlock(caps, file.name, t)}
+          onDeleteSelected={(entries) => handleArchiveDelete(file, entries)}
+          deleteBlock={deleteBlock(caps, file.name, t)}
         />
       ),
     });
@@ -673,7 +782,10 @@ function Inner({
 
   // Asks where to put chosen archive entries (default: the open folder).
   const askExtractEntries = (file: FileItem, entries: string[]) => {
-    if (!guardWrite("extract", isZipName(file.name) ? "unzip" : "tar")) return;
+    if (
+      !guardWrite("extract", archiveToolFor(file.name, caps?.tools ?? [], true))
+    )
+      return;
     openPopup({
       title: t("containerFiles.extractTitle"),
       extra: file.name,
@@ -705,6 +817,21 @@ function Inner({
       items.push({
         label: t("containerFiles.archiveOpenMenu"),
         action: () => openArchive(selected[0]),
+      });
+    }
+    if (selected.length > 0) {
+      items.push({
+        label: t("containerFiles.appendMenu"),
+        action: () => {
+          if (!guardWrite("append") || appendRefused()) return;
+          pickPath({
+            title: t("containerFiles.appendPickTitle"),
+            initialDir: pathRef.current,
+            mode: "any",
+            fileFilter: canAppendTo,
+            onPick: (archive) => void handleAppend(archive, selected),
+          });
+        },
       });
     }
     items.push({
@@ -1011,12 +1138,16 @@ function Inner({
       toast.error(t("containerFiles.archiveReadOnly"));
       return;
     }
+    markInternalClipboard();
     setClipboard({ files: items, cut: false });
     bridge?.setClipboard(items, false);
     toast.success(t("containerFiles.copied", { count: items.length }));
+    // Desktop on Windows: Explorer can paste the copy too (silent elsewhere).
+    void copyToOsClipboard({ t, sessionId, containerId, items });
   };
   const handleCut = (items: FileItem[]) => {
     if (items.length === 0 || !guardWrite("paste")) return;
+    markInternalClipboard();
     setClipboard({ files: items, cut: true });
     bridge?.setClipboard(items, true);
     toast.success(t("containerFiles.cut", { count: items.length }));
@@ -1071,6 +1202,179 @@ function Inner({
     if (failed < items.length) await refresh();
   };
 
+  // The workspace clipboard moved to another pane: drop this pane's own copy
+  // so a stale cut does not stay dimmed or paste later.
+  React.useEffect(() => {
+    if (bridge && !bridge.ownsClipboard) setClipboard(null);
+  }, [bridge?.ownsClipboard]);
+
+  const cutDim = React.useMemo(() => {
+    if (bridge) return bridge.cutPaths;
+    return clipboard?.cut
+      ? new Set(clipboard.files.map((f) => f.path))
+      : new Set<string>();
+  }, [bridge?.cutPaths, clipboard]);
+  const clipScope = bridge?.paneId ?? "standalone";
+
+  // Escape in the active pane empties the clipboard.
+  const clipEscRef = React.useRef<() => void>(() => undefined);
+  clipEscRef.current = () => {
+    if (clipboard) setClipboard(null);
+    bridge?.clearClipboard();
+  };
+  React.useEffect(() => {
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (!isActivePane(rootRef.current)) return;
+      if (dialogOwnsKey(event)) return;
+      const target = event.target as Element | null;
+      if (
+        target?.closest?.(
+          'input, textarea, [contenteditable="true"], [role="dialog"], [role="alertdialog"], [role="menu"]',
+        )
+      )
+        return;
+      clipEscRef.current();
+    };
+    document.addEventListener("keydown", onEsc);
+    return () => document.removeEventListener("keydown", onEsc);
+  }, []);
+
+  // Files copied in Explorer or Finder paste into the active pane. The
+  // internal clipboard wins when it was set after the window last gained
+  // focus. In the browser the OS one arrives as a paste event. Termix Desktop
+  // on Windows does not rely on that event (the webview may not deliver files
+  // in it): Ctrl+V reads the Explorer clipboard through local PowerShell and
+  // uploads those paths like a drop from the local pane, folders included.
+  const [explorerPaste, setExplorerPaste] = React.useState(false);
+  React.useEffect(() => {
+    if (!bridge || !isLocalFileBrowserAvailable()) return;
+    let alive = true;
+    localPlatform().then(
+      (platform) =>
+        alive && setExplorerPaste(supportsOsFileClipboard(platform)),
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, [!!bridge]);
+  const explorerReading = React.useRef(false);
+  const pasteFromExplorer = async (hasInternal: boolean) => {
+    if (explorerReading.current || !bridge) return;
+    if (isVirtualPath(pathRef.current)) {
+      toast.error(t("containerFiles.archiveReadOnly"));
+      return;
+    }
+    explorerReading.current = true;
+    const id = toast.loading(t("containerFiles.osClipboardReading"));
+    try {
+      const { files, own } = await readExplorerClipboard();
+      toast.dismiss(id);
+      const localPaths = bridge.localClipboardPaths();
+      const action = explorerPasteAction({
+        fileCount: files.length,
+        own,
+        hasInternal,
+        // A Copy in the local pane lists its real paths on the OS clipboard.
+        matchesInternal:
+          !!localPaths &&
+          samePaths(
+            files.map((f) => f.path),
+            localPaths,
+          ),
+      });
+      if (action === "internal") {
+        await handlePaste();
+      } else if (action === "empty") {
+        toast.info(t("containerFiles.osClipboardEmpty"));
+      } else {
+        await bridge.pasteLocalPaths(
+          pasteTargetDir(pathRef.current, selectedRef.current),
+          files.map((f) => ({
+            path: f.path,
+            name: localBaseName(f.path),
+            isDirectory: f.isDirectory,
+          })),
+        );
+      }
+    } catch (error) {
+      toast.dismiss(id);
+      toast.error(
+        t("containerFiles.osClipboardReadFailed", {
+          error: clipboardErrorText(error, t),
+        }),
+      );
+    } finally {
+      explorerReading.current = false;
+    }
+  };
+  const osPasteRef = React.useRef<{
+    keydown(event: KeyboardEvent): void;
+    paste(event: ClipboardEvent): void;
+  }>({ keydown: () => undefined, paste: () => undefined });
+  osPasteRef.current = {
+    keydown: (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.shiftKey) return;
+      if (!isPasteKey(event)) return;
+      if (!isVisible || !isActivePane(rootRef.current)) return;
+      if (ignoresPaste(event.target as Element | null)) return;
+      const hasInternal = !!clipboard || !!bridge?.hasClipboard;
+      if (explorerPaste) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const internalWins =
+          hasInternal &&
+          clipboardWinner({ hasInternal, ...clipboardTimes() }) === "internal";
+        if (internalWins) void handlePaste();
+        else void pasteFromExplorer(hasInternal);
+        return;
+      }
+      if (!typesLatinV(event)) return;
+      if (!hasInternal) return;
+      if (clipboardWinner({ hasInternal: true, ...clipboardTimes() }) === "os")
+        event.stopImmediatePropagation();
+    },
+    paste: (event) => {
+      if (!isVisible || !isActivePane(rootRef.current)) return;
+      if (ignoresPaste(event.target as Element | null)) return;
+      const hasInternal = !!clipboard || !!bridge?.hasClipboard;
+      if (clipboardWinner({ hasInternal, ...clipboardTimes() }) === "internal")
+        return;
+      const files = extractPasteFiles(event.clipboardData);
+      if (files.length === 0) {
+        // Ctrl+V was held back for the OS clipboard, which has no files.
+        if (hasInternal) {
+          event.preventDefault();
+          void handlePaste();
+        }
+        return;
+      }
+      event.preventDefault();
+      if (isVirtualPath(pathRef.current)) {
+        toast.error(t("containerFiles.archiveReadOnly"));
+        return;
+      }
+      if (files.some(looksLikeFolder) && takeFolderHint())
+        toast.info(t("containerFiles.pasteFoldersHint"));
+      void uploadAll(
+        files.map((file) => ({ file })),
+        pasteTargetDir(pathRef.current, selectedRef.current),
+      );
+    },
+  };
+  React.useEffect(() => {
+    trackWindowFocus();
+    const onKey = (event: KeyboardEvent) => osPasteRef.current.keydown(event);
+    const onPaste = (event: ClipboardEvent) => osPasteRef.current.paste(event);
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("paste", onPaste);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("paste", onPaste);
+    };
+  }, []);
+
   const handlePaste = async () => {
     if (isVirtualPath(pathRef.current)) {
       toast.error(t("containerFiles.archiveReadOnly"));
@@ -1092,6 +1396,175 @@ function Inner({
       (f) => f.path !== target.path && !target.path.startsWith(`${f.path}/`),
     );
     if (items.length > 0) await transferInto(items, target.path, true);
+  };
+
+  // Sources are named relative to their own folder (the open one, normally).
+  const appendDir = (sources: FileItem[]) => {
+    const p = sources[0].path;
+    return p.slice(0, p.lastIndexOf("/")) || "/";
+  };
+
+  // Adds files to an existing archive (picked from the menu, or dropped on it).
+  const handleAppend = async (archive: string, items: FileItem[]) => {
+    const name = archive.slice(archive.lastIndexOf("/") + 1);
+    if (
+      !guardWrite("append", appendTool(name, caps?.tools)) ||
+      appendRefused(name)
+    )
+      return;
+    const sources = appendSources(items, archive);
+    if (sources.length === 0) {
+      toast.error(t("containerFiles.appendIncludesArchive"));
+      return;
+    }
+    try {
+      await runWithProgress({
+        t,
+        origin,
+        kind: "append",
+        name,
+        task: (track) =>
+          fsApi.append(
+            key,
+            archive,
+            appendDir(sources),
+            sources.map((f) => f.name),
+            track,
+          ),
+      });
+    } catch (error) {
+      if (error instanceof OpCancelled) {
+        toast.info(t("containerFiles.opCancelled"));
+        return;
+      }
+      const details = (
+        error instanceof ContainerApiError ? error.data?.details : undefined
+      ) as { reason?: string; tool?: string } | undefined;
+      const textKey = appendErrorKey(
+        error instanceof ContainerApiError ? error.code : undefined,
+        details?.reason,
+      );
+      toast.error(
+        textKey
+          ? t(textKey, { tool: details?.tool })
+          : errorText(error, t("containerFiles.appendFailed")),
+      );
+      return;
+    }
+    // Archive windows already open on this archive show the new entries.
+    notifyArchiveChanged(key, archive);
+    toast.success(t("containerFiles.appendDone", { name }));
+    await refresh();
+  };
+
+  // Paths dropped on an open archive window; the files are those of the
+  // pane's folder, or are named from their own folder when it differs.
+  const handleAppendPaths = async (archive: string, paths: string[]) => {
+    const items = paths.map((p) => ({
+      ...(filesRef.current.find((f) => f.path === p) ?? {
+        name: p.slice(p.lastIndexOf("/") + 1),
+        type: "file",
+      }),
+      path: p,
+    })) as FileItem[];
+    const name = archive.slice(archive.lastIndexOf("/") + 1);
+    const sources = appendSources(items, archive);
+    if (sources.length === 0 || appendRefused(name)) return;
+    const confirmed = await confirm({
+      title: t("containerFiles.appendConfirmTitle"),
+      description: t("containerFiles.appendConfirmDesc", {
+        items: sources.length === 1 ? sources[0].name : `${sources.length}`,
+        name,
+      }),
+      confirmLabel: t("containerFiles.appendConfirm"),
+    });
+    if (confirmed) await handleAppend(archive, sources);
+  };
+
+  // Deletes entries from an archive opened in a window. The pane may itself be
+  // inside an archive, so this checks the probe directly instead of guardWrite.
+  const handleArchiveDelete = async (file: FileItem, entries: string[]) => {
+    const blocked =
+      deleteBlock(caps, file.name, t) ??
+      featureBlock(
+        caps,
+        "archiveDelete",
+        t,
+        appendTool(file.name, caps?.tools),
+      );
+    if (blocked) {
+      toast.error(blocked);
+      return;
+    }
+    const label = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+    const confirmed = await confirm({
+      title: t("containerFiles.archiveDeleteConfirmTitle"),
+      description: t("containerFiles.archiveDeleteConfirmDesc", {
+        items: entries.length === 1 ? label(entries[0]) : `${entries.length}`,
+        name: file.name,
+      }),
+      confirmLabel: t("containerFiles.archiveDeleteConfirm"),
+      destructive: true,
+    });
+    if (!confirmed) return;
+    try {
+      await runWithProgress({
+        t,
+        origin,
+        kind: "delete",
+        name: file.name,
+        task: (track) => fsApi.archiveDelete(key, file.path, entries, track),
+      });
+    } catch (error) {
+      if (error instanceof OpCancelled) {
+        toast.info(t("containerFiles.opCancelled"));
+        return;
+      }
+      const details = (
+        error instanceof ContainerApiError ? error.data?.details : undefined
+      ) as { reason?: string; tool?: string } | undefined;
+      const textKey = deleteErrorKey(
+        error instanceof ContainerApiError ? error.code : undefined,
+        details?.reason,
+      );
+      toast.error(
+        textKey
+          ? t(textKey, { tool: details?.tool })
+          : errorText(error, t("containerFiles.archiveDeleteFailed")),
+      );
+      return;
+    }
+    notifyArchiveChanged(key, file.path);
+    toast.success(t("containerFiles.archiveDeleteDone", { name: file.name }));
+    await refresh();
+  };
+
+  const appendHint = (dragged: FileItem[], target: FileItem) =>
+    appendDropHintFor(dragged, target, pathRef.current, caps, t);
+  const appendDropHint = (dragged: FileItem[], target: FileItem) =>
+    appendHint(dragged, target)?.text ?? null;
+  const appendDropBlock = (dragged: FileItem[], target: FileItem) => {
+    const hint = appendHint(dragged, target);
+    return hint?.kind === "blocked" ? hint.text : null;
+  };
+
+  const handleDropOnFile = async (dragged: FileItem[], target: FileItem) => {
+    const items = appendSources(dragged, target.path);
+    if (
+      items.length === 0 ||
+      !guardWrite("append", appendTool(target.name, caps?.tools)) ||
+      appendRefused(target.name)
+    )
+      return;
+    const confirmed = await confirm({
+      title: t("containerFiles.appendConfirmTitle"),
+      description: t("containerFiles.appendConfirmDesc", {
+        items: items.length === 1 ? items[0].name : `${items.length}`,
+        name: target.name,
+      }),
+      confirmLabel: t("containerFiles.appendConfirm"),
+    });
+    if (confirmed) await handleAppend(target.path, items);
   };
 
   // ---- properties / archives -------------------------------------------
@@ -1119,12 +1592,12 @@ function Inner({
     recursive: boolean,
     scope: ApplyScope,
   ) => {
-    if (!guardWrite("owner")) throw new Error("read-only");
+    if (!guardWrite("owner")) throw new Error(t("containerFiles.chownFailed"));
     const ok = await run(
       () => fsApi.chown(key, file.path, owner, recursive, scope),
       t("containerFiles.chownFailed"),
     );
-    if (!ok) throw new Error("chown failed");
+    if (!ok) throw new Error(t("containerFiles.chownFailed"));
   };
 
   const openCompress = (items: FileItem[]) => {
@@ -1162,6 +1635,7 @@ function Inner({
       () =>
         runWithProgress({
           t,
+          origin,
           kind: "compress",
           name: archiveName,
           task: (track) =>
@@ -1184,7 +1658,9 @@ function Inner({
 
   // Asks where to extract (default: the open folder), then extracts there.
   const handleExtract = (file: FileItem) => {
-    if (!guardWrite("extract", /.zip$/i.test(file.name) ? "unzip" : "tar"))
+    if (
+      !guardWrite("extract", archiveToolFor(file.name, caps?.tools ?? [], true))
+    )
       return;
     openPopup({
       title: t("containerFiles.extractTitle"),
@@ -1202,45 +1678,7 @@ function Inner({
   };
 
   const extractTo = async (file: FileItem, dest: string) => {
-    let overwrite = false;
-    const extractWith = (over: boolean) =>
-      runWithProgress({
-        t,
-        kind: "extract",
-        name: file.name,
-        task: (track) => fsApi.extract(key, file.path, dest, over, track),
-      });
-    try {
-      await extractWith(false);
-    } catch (error) {
-      if (error instanceof OpCancelled) {
-        toast.info(t("containerFiles.opCancelled"));
-        return;
-      }
-      if (!(error instanceof ContainerApiError && error.code === "EXISTS")) {
-        toast.error(errorText(error, t("containerFiles.extractFailed")));
-        return;
-      }
-      const confirmed = await confirm({
-        title: t("containerFiles.extractOverwriteTitle"),
-        description: t("containerFiles.extractOverwriteDesc", {
-          name: file.name,
-        }),
-        confirmLabel: t("containerFiles.overwrite"),
-        destructive: true,
-      });
-      if (!confirmed) return;
-      overwrite = true;
-    }
-    if (overwrite) {
-      const ok = await run(
-        () => extractWith(true),
-        t("containerFiles.extractFailed"),
-      );
-      if (!ok) return;
-    }
-    toast.success(t("containerFiles.extractDone", { name: file.name }));
-    await refresh();
+    if (await extractEntries(key, file.path, null, dest)) await refresh();
   };
 
   // ---- download / upload ------------------------------------------------
@@ -1297,7 +1735,8 @@ function Inner({
           });
           const total =
             Number(response.headers.get("content-length")) || undefined;
-          if (!response.body) throw new Error("Empty response");
+          if (!response.body)
+            throw new Error(t("containerFiles.emptyResponse"));
           await pipeToHandle(response.body, handle, {
             signal: controller.signal,
             onProgress: (loaded) => progress(loaded, total),
@@ -1318,7 +1757,7 @@ function Inner({
         finished = true;
         toast.dismiss(id);
         if (controller.signal.aborted) {
-          void cancelTransfer(transferId);
+          void cancelTransfer(transferId, origin);
           toast.info(t("fileManager.localTransferCancelled"));
           return;
         }
@@ -1376,7 +1815,7 @@ function Inner({
             label: t("fileManager.cancel"),
             onClick: () => {
               controller.abort();
-              for (const tid of active.keys()) void cancelTransfer(tid);
+              for (const tid of active.keys()) void cancelTransfer(tid, origin);
             },
           },
         },
@@ -1435,13 +1874,13 @@ function Inner({
       render();
       poll = setInterval(() => {
         for (const [tid, a] of active) {
-          void transferStatus(tid).then((s) => {
+          void transferStatus(tid, origin).then((s) => {
             if (s && active.has(tid)) a.bytes = s.bytes;
           });
         }
         render();
       }, 500);
-      await runWithConcurrency(entries, TRANSFER_CONCURRENCY, async (entry) => {
+      await runWithConcurrency(entries, concurrency, async (entry) => {
         const top = topLevelOf(entry.rel ?? entry.file.name);
         if (skip.has(top) || controller.signal.aborted) return;
         const transferId = newTransferId("up");
@@ -1589,14 +2028,24 @@ function Inner({
           : t("fileManager.openTerminalHere")),
       onClick: () => void requestTerminal(containingDirectory(pathRef.current)),
     },
+    {
+      id: "mounts",
+      label: t("containerFiles.mountsButton"),
+      icon: <HardDrive className="size-3.5" />,
+      disabled: gone,
+      title: t("containerFiles.mountsButtonTitle"),
+      onClick: openMountsWindow,
+    },
   ];
 
   return (
     <div
       ref={rootRef}
       data-fm-pane=""
+      data-clip-scope={clipScope}
       className="relative h-full min-h-0 w-full flex-1"
     >
+      {cutDim.size > 0 && <style>{cutDimCss(clipScope, cutDim)}</style>}
       <div
         className="absolute inset-0 flex flex-col overflow-hidden bg-background"
         style={{ opacity: isVisible ? 1 : 0 }}
@@ -1645,6 +2094,7 @@ function Inner({
               onLoad={(p) => void tree.load(p)}
               onNavigate={(p) => navigateTo(p)}
               parsePaths={parseInternalFiles}
+              mountMark={mountMark}
               onDropPaths={(paths, dest) => {
                 const items = filesRef.current.filter((f) =>
                   paths.includes(f.path),
@@ -1693,6 +2143,9 @@ function Inner({
               onCut={handleCut}
               onPaste={() => void handlePaste()}
               onFileDrop={(d, target) => void handleFileDrop(d, target)}
+              fileDropHint={appendDropHint}
+              fileDropBlock={appendDropBlock}
+              onDropOnFile={(d, target) => void handleDropOnFile(d, target)}
               hasClipboard={!!clipboard || !!bridge?.hasClipboard}
               createIntent={createIntent}
               onConfirmCreate={(n) => void confirmCreate(n)}
@@ -1712,6 +2165,11 @@ function Inner({
               parentPath={currentPath === "/" ? null : parentOf(currentPath)}
               onNavigateUp={goUp}
               scrollResetKey={currentPath}
+              mountMark={(f) =>
+                f.type === "link" || isVirtualPath(f.path)
+                  ? null
+                  : mountMark(f.path)
+              }
             />
             {(truncated || isVirtualPath(currentPath)) && (
               <div className="absolute bottom-0 left-0 right-0 border-t border-border bg-card/90 px-3 py-1 text-[11px] text-muted-foreground">

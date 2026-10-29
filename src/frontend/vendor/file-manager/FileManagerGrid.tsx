@@ -10,7 +10,10 @@ import React, {
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@termix-ssh/plugin-sdk/ui";
+import { dialogOwnsKey } from "../../popup/keyGuard";
 import { isActivePane, PANE_ATTR } from "../../paneFocus";
+import { layoutKey } from "../../layoutKey";
+import { MOUNT_ICON_CLASS, MountLetters } from "../../MountLetters";
 import {
   Folder,
   File,
@@ -28,6 +31,7 @@ import {
   ArrowDown,
   FileSymlink,
   Move,
+  Ban,
   GitCompare,
 } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
@@ -84,6 +88,15 @@ interface DragState {
   mousePosition?: { x: number; y: number };
 }
 
+interface MountMark {
+  title: string;
+  readOnly: boolean;
+  /** Where the mount comes from: a host path, a volume name or "tmpfs". */
+  target: string;
+  /** Translated "RW" / "RO" label. */
+  label: string;
+}
+
 interface FileManagerGridProps {
   files: FileItem[];
   selectedFiles: FileItem[];
@@ -133,6 +146,14 @@ interface FileManagerGridProps {
   onNavigateUp?: () => void;
   /** Scrolls back to the top whenever this value changes (e.g. the folder). */
   scrollResetKey?: string;
+  /** Marks entries that are container mount points: blue icon, RW/RO label, where it points. */
+  mountMark?: (file: FileItem) => MountMark | null;
+  /** Hint text when dropping `dragged` on the file `target` does something (null: nothing). */
+  fileDropHint?: (dragged: FileItem[], target: FileItem) => string | null;
+  /** Why dropping `dragged` on the file `target` is refused (null: not refused): forbidden cursor and the reason in the drag hint. */
+  fileDropBlock?: (dragged: FileItem[], target: FileItem) => string | null;
+  /** Called instead of the diff when `fileDropHint` accepted the drop. */
+  onDropOnFile?: (dragged: FileItem[], target: FileItem) => void;
 }
 
 const getFileTypeColor = (file: FileItem): string => {
@@ -151,14 +172,22 @@ const getFileIcon = (
   file: FileItem,
   viewMode: "grid" | "list" = "grid",
   compact = false,
+  mark: MountMark | null = null,
 ) => {
   const icon = getBaseFileIcon(file, viewMode, compact);
+  const linked = !!file.linkTarget && file.type !== "link";
   // Links to files and folders keep their icon but get a link badge.
-  if (!file.linkTarget || file.type === "link") return icon;
+  if (!linked && !mark) return icon;
   return (
-    <span className="relative inline-flex">
-      {icon}
-      <FileSymlink className="absolute -bottom-1 -right-1 size-3 rounded-sm bg-background text-blue-400" />
+    <span title={mark?.title} className="relative inline-flex items-center">
+      {/* A mount point is a filled blue icon with RW/RO drawn inside it. */}
+      <span className={cn("relative inline-flex", mark && MOUNT_ICON_CLASS)}>
+        {icon}
+        {mark && <MountLetters label={mark.label} />}
+      </span>
+      {linked && (
+        <FileSymlink className="absolute -bottom-1 -right-1 size-3 rounded-sm bg-background text-blue-400" />
+      )}
     </span>
   );
 };
@@ -282,6 +311,10 @@ export function FileManagerGrid({
   parentPath,
   onNavigateUp,
   scrollResetKey,
+  mountMark,
+  fileDropHint,
+  fileDropBlock,
+  onDropOnFile,
 }: FileManagerGridProps) {
   const { t } = useTranslation();
   const gridRef = useRef<HTMLDivElement>(null);
@@ -491,7 +524,9 @@ export function FileManagerGrid({
       !dragState.files.some((f) => f.path === targetFile.path)
     ) {
       setDragState((prev) => ({ ...prev, target: targetFile }));
-      e.dataTransfer.dropEffect = "move";
+      e.dataTransfer.dropEffect = fileDropBlock?.(dragState.files, targetFile)
+        ? "none"
+        : "move";
     } else if (isLocalFilesDrag(e.dataTransfer)) {
       e.dataTransfer.dropEffect = "copy";
       const nextTarget =
@@ -554,6 +589,8 @@ export function FileManagerGrid({
 
     if (targetFile.type === "directory") {
       onFileDrop?.(dragState.files, targetFile);
+    } else if (fileDropHint?.(dragState.files, targetFile)) {
+      onDropOnFile?.(dragState.files, targetFile);
     } else if (
       targetFile.type === "file" &&
       dragState.files.length === 1 &&
@@ -584,6 +621,8 @@ export function FileManagerGrid({
     height: number;
   } | null>(null);
   const [justFinishedSelecting, setJustFinishedSelecting] = useState(false);
+  // The selection as it was when the drag started, so Escape can put it back.
+  const selectionBaseRef = useRef<FileItem[]>([]);
 
   const handleDragEnter = useCallback(
     (e: React.DragEvent) => {
@@ -675,6 +714,7 @@ export function FileManagerGrid({
         const startX = e.clientX - rect.left;
         const startY = e.clientY - rect.top;
 
+        selectionBaseRef.current = selectedFiles;
         setIsSelecting(true);
         setSelectionStart({ x: startX, y: startY });
         setSelectionRect({ x: startX, y: startY, width: 0, height: 0 });
@@ -883,16 +923,35 @@ export function FileManagerGrid({
       }
     };
 
+    // Escape abandons the drag: no rectangle, the earlier selection comes back.
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !isSelecting) return;
+      e.stopPropagation();
+      setIsSelecting(false);
+      setSelectionStart(null);
+      setSelectionRect(null);
+      // The button is still down: swallow the click its release produces.
+      setJustFinishedSelecting(true);
+      document.addEventListener(
+        "mouseup",
+        () => setTimeout(() => setJustFinishedSelecting(false), 50),
+        { once: true },
+      );
+      onSelectionChange(selectionBaseRef.current);
+    };
+
     if (isSelecting) {
       document.addEventListener("mouseup", handleGlobalMouseUp);
       document.addEventListener("mousemove", handleGlobalMouseMove);
+      window.addEventListener("keydown", handleEscape, true);
 
       return () => {
         document.removeEventListener("mouseup", handleGlobalMouseUp);
         document.removeEventListener("mousemove", handleGlobalMouseMove);
+        window.removeEventListener("keydown", handleEscape, true);
       };
     }
-  }, [isSelecting, selectionStart]);
+  }, [isSelecting, selectionStart, onSelectionChange]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -1005,6 +1064,9 @@ export function FileManagerGrid({
       // Several panes can be visible at once: only the one the user last
       // pressed handles keys (see paneFocus.ts).
       if (!isActivePane(grid.closest(`[${PANE_ATTR}]`))) return;
+      // A key pressed in a dialog or window, or while a confirm card is open,
+      // belongs to that dialog (Enter must not open the selected file).
+      if (dialogOwnsKey(event)) return;
 
       const activeElement = document.activeElement;
       if (
@@ -1016,7 +1078,8 @@ export function FileManagerGrid({
         return;
       }
 
-      switch (event.key) {
+      // Ctrl/Cmd shortcuts also work on a non-Latin layout (physical key).
+      switch (layoutKey(event)) {
         case "Escape":
           onSelectionChange([]);
           break;
@@ -1324,7 +1387,7 @@ export function FileManagerGrid({
                                   compact ? "mb-1" : "mb-2",
                                 )}
                               >
-                                {getFileIcon(file, viewMode, compact)}
+                                {getFileIcon(file, viewMode, compact, mountMark?.(file) ?? null)}
                               </div>
                               <div className="w-full flex flex-col items-center pointer-events-none">
                                 {editingFile?.path === file.path ? (
@@ -1362,6 +1425,14 @@ export function FileManagerGrid({
                                     title={file.linkTarget}
                                   >
                                     → {file.linkTarget}
+                                  </p>
+                                )}
+                                {mountMark?.(file) && (
+                                  <p
+                                    className="text-[10px] text-blue-500 dark:text-blue-400 mt-0.5 truncate w-full text-center"
+                                    title={mountMark(file)?.title}
+                                  >
+                                    → {mountMark(file)?.target}
                                   </p>
                                 )}
                               </div>
@@ -1537,7 +1608,7 @@ export function FileManagerGrid({
                           )}
                         >
                           <div className="shrink-0">
-                            {getFileIcon(file, viewMode, compact)}
+                            {getFileIcon(file, viewMode, compact, mountMark?.(file) ?? null)}
                           </div>
                           {isEditing ? (
                             <input
@@ -1563,6 +1634,14 @@ export function FileManagerGrid({
                               {file.linkTarget && (
                                 <span className="text-accent-brand ml-1 normal-case font-normal">
                                   → {file.linkTarget}
+                                </span>
+                              )}
+                              {mountMark?.(file) && (
+                                <span
+                                  className="text-blue-500 dark:text-blue-400 ml-1 normal-case font-normal"
+                                  title={mountMark(file)?.title}
+                                >
+                                  → {mountMark(file)?.target}
                                 </span>
                               )}
                             </span>
@@ -1690,6 +1769,20 @@ export function FileManagerGrid({
                         {t("fileManager.moveTo", {
                           name: dragState.target.name,
                         })}
+                      </span>
+                    </>
+                  ) : fileDropBlock?.(files, dragState.target) ? (
+                    <>
+                      <Ban className="size-3.5 text-destructive" />
+                      <span className="max-w-xs text-[10px] font-bold uppercase tracking-widest text-foreground">
+                        {fileDropBlock(files, dragState.target)}
+                      </span>
+                    </>
+                  ) : fileDropHint?.(files, dragState.target) ? (
+                    <>
+                      <Move className="size-3.5 text-accent-brand" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">
+                        {fileDropHint(files, dragState.target)}
                       </span>
                     </>
                   ) : (

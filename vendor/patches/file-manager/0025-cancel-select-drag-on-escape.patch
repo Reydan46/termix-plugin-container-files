@@ -1,0 +1,58 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 53c987b..12acb18 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -634,6 +634,8 @@ export function FileManagerGrid({
+     height: number;
+   } | null>(null);
+   const [justFinishedSelecting, setJustFinishedSelecting] = useState(false);
++  // The selection as it was when the drag started, so Escape can put it back.
++  const selectionBaseRef = useRef<FileItem[]>([]);
+ 
+   const handleDragEnter = useCallback(
+     (e: React.DragEvent) => {
+@@ -725,6 +727,7 @@ export function FileManagerGrid({
+         const startX = e.clientX - rect.left;
+         const startY = e.clientY - rect.top;
+ 
++        selectionBaseRef.current = selectedFiles;
+         setIsSelecting(true);
+         setSelectionStart({ x: startX, y: startY });
+         setSelectionRect({ x: startX, y: startY, width: 0, height: 0 });
+@@ -933,16 +936,35 @@ export function FileManagerGrid({
+       }
+     };
+ 
++    // Escape abandons the drag: no rectangle, the earlier selection comes back.
++    const handleEscape = (e: KeyboardEvent) => {
++      if (e.key !== "Escape" || !isSelecting) return;
++      e.stopPropagation();
++      setIsSelecting(false);
++      setSelectionStart(null);
++      setSelectionRect(null);
++      // The button is still down: swallow the click its release produces.
++      setJustFinishedSelecting(true);
++      document.addEventListener(
++        "mouseup",
++        () => setTimeout(() => setJustFinishedSelecting(false), 50),
++        { once: true },
++      );
++      onSelectionChange(selectionBaseRef.current);
++    };
++
+     if (isSelecting) {
+       document.addEventListener("mouseup", handleGlobalMouseUp);
+       document.addEventListener("mousemove", handleGlobalMouseMove);
++      window.addEventListener("keydown", handleEscape, true);
+ 
+       return () => {
+         document.removeEventListener("mouseup", handleGlobalMouseUp);
+         document.removeEventListener("mousemove", handleGlobalMouseMove);
++        window.removeEventListener("keydown", handleEscape, true);
+       };
+     }
+-  }, [isSelecting, selectionStart]);
++  }, [isSelecting, selectionStart, onSelectionChange]);
+ 
+   const handleDrop = useCallback(
+     (e: React.DragEvent) => {

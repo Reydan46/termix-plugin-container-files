@@ -300,6 +300,7 @@ export async function startConnect(
           lastActive: Date.now(),
           activeOperations: 0,
           states: new Map(),
+          mounts: new Map(),
           capabilities: new Map(),
         };
         sessions.add(session);

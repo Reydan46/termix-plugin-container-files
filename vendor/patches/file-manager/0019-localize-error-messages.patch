@@ -1,0 +1,55 @@
+diff --git a/file-manager-utils.ts b/file-manager-utils.ts
+index 644f31a..1508fcf 100644
+--- a/file-manager-utils.ts
++++ b/file-manager-utils.ts
+@@ -1,3 +1,5 @@
++import { getApp } from "../../app";
++
+ export function formatFileSize(bytes?: number): string {
+   if (bytes === undefined || bytes === null) return "-";
+   if (bytes === 0) return "0 B";
+@@ -100,12 +102,12 @@ export async function trashInBatches<T>(
+         } else if (error !== CANCELLED) {
+           failed.add(item);
+           if (results[i]?.needsSudo) needsSudo.add(item);
+-          itemError ??= error ?? "No result";
++          itemError ??= error ?? getApp().t("fileManager.unknownError");
+         }
+       });
+       opts.onBatchDone?.(trashed);
+     } catch (error) {
+-      thrown = error ?? new Error("Batch failed");
++      thrown = error ?? new Error(getApp().t("fileManager.unknownError"));
+       for (const item of batch) failed.add(item);
+       return;
+     }
+diff --git a/lib/local-files.ts b/lib/local-files.ts
+index 43f2861..3867c1a 100644
+--- a/lib/local-files.ts
++++ b/lib/local-files.ts
+@@ -4,6 +4,7 @@
+ 
+ import { isElectron } from "@termix-ssh/plugin-sdk/ui";
+ import { fileManagerApi } from "../api/client";
++import { getApp } from "../../../app";
+ import type {
+   LocalDirectoryListing,
+   LocalFsHomeInfo,
+@@ -21,7 +22,7 @@ function unwrap<T>(result: LocalFsResult<T>): T {
+     const message =
+       result && "error" in result && result.error
+         ? result.error
+-        : "Local file operation failed";
++        : getApp().t("fileManager.unknownError");
+     const error = new Error(message) as Error & { code?: string };
+     if (result && "code" in result) error.code = result.code;
+     throw error;
+@@ -34,7 +35,7 @@ async function call<T>(
+   body?: Record<string, unknown>,
+ ): Promise<T> {
+   if (!isLocalFileBrowserAvailable()) {
+-    throw new Error("Local file access is only available in the desktop app");
++    throw new Error(getApp().t("containerFiles.desktopOnly"));
+   }
+   const api = fileManagerApi();
+   const response = body

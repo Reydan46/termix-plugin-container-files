@@ -17,7 +17,7 @@ import { LocalFileManager } from "../LocalFileManager";
 import { isLocalFileBrowserAvailable } from "../vendor/file-manager/lib/local-files";
 import { ContainerList, StateBadge } from "../containers/ContainerList";
 import type { ContainerLiveState } from "../containerFsApi";
-import { containerName, type ContainerInfo, type Runtime } from "../types";
+import { containerName, type ContainerInfo } from "../types";
 import {
   MAX_PANES,
   computeRects,
@@ -61,12 +61,38 @@ import {
 } from "./archiveDragRegistry";
 import { isVirtualPath } from "../archivePath";
 import { targetKey } from "../containerFsApi";
+import { originOfSession } from "../sessionOrigin";
 import { useArchiveExtract } from "../useArchiveExtract";
 import { baseName } from "./conflicts";
 import { localBaseName, parseLocalFiles } from "./localPaths";
 import { useWorkspaceTransfers } from "./useWorkspaceTransfers";
 import { decideDragEnd, hasPaneDrag, startPaneDrag } from "./paneDrag";
-import type { PaneApi, PaneBridge, WorkspaceClipboard } from "./types";
+import type { PaneApi, PaneBridge } from "./types";
+import {
+  clipboardTimes,
+  clipboardWinner,
+  explorerPasteAction,
+  markInternalClipboard,
+  samePaths,
+  supportsOsFileClipboard,
+} from "../osClipboard";
+import { localPlatform, readExplorerClipboard } from "../osClipboardApi";
+import { clipboardErrorText } from "../osClipboardErrors";
+import {
+  clearOsClipboardAfterCut,
+  copyLocalToOsClipboard,
+  supersedeOsCopy,
+} from "../osClipboardCopy";
+import {
+  afterPaste,
+  cutPaths,
+  makeClipboard,
+  pasteKind,
+  resolvePasteTarget,
+  type ClipItem,
+  type ClipMode,
+  type PaneClipboard,
+} from "./clipboard";
 
 interface WorkspaceProps {
   sessionId: string;
@@ -77,8 +103,6 @@ interface WorkspaceProps {
   isVisible: boolean;
   /** Element in the tab's title row that receives the "add pane" button. */
   actionsHost?: HTMLElement | null;
-  runtime: Runtime | null;
-  hostConfig: unknown;
   onContainerState: (id: string, state: ContainerLiveState | null) => void;
   /** Called after a container action in a picker pane. */
   onChanged: (id: string, live: ContainerLiveState | null) => void;
@@ -116,11 +140,22 @@ function WorkspaceInner(props: WorkspaceProps) {
     props,
     (p) => initLayout(p) ?? emptyLayout(),
   );
-  const [clip, setClipState] = React.useState<WorkspaceClipboard | null>(null);
-  const clipRef = React.useRef<WorkspaceClipboard | null>(null);
-  const setClip = (value: WorkspaceClipboard | null) => {
+  const [clip, setClipState] = React.useState<PaneClipboard | null>(null);
+  const clipRef = React.useRef<PaneClipboard | null>(null);
+  const setClip = (value: PaneClipboard | null) => {
     clipRef.current = value;
     setClipState(value);
+  };
+  /**
+   * Every Copy or Cut (any pane, keys, menu or toolbar) goes through here: it
+   * stamps the clipboard as the newest, so a Ctrl+V pastes what was copied
+   * last, and stops a container copy that is still being prepared for the OS
+   * clipboard from landing after it.
+   */
+  const putClip = (value: PaneClipboard | null) => {
+    markInternalClipboard();
+    supersedeOsCopy();
+    setClip(value);
   };
   const apis = React.useRef(new Map<string, PaneApi>());
   const paneByContainer = React.useRef(layout.panes);
@@ -265,6 +300,95 @@ function WorkspaceInner(props: WorkspaceProps) {
     );
   };
 
+  /** Pastes the workspace clipboard into `dir` of the pane `destPaneId`. */
+  const pasteInto = async (destPaneId: string, dir: string) => {
+    const c = clipRef.current;
+    const destContainer = isLocalPane(destPaneId)
+      ? null
+      : paneContainer(destPaneId);
+    const kind = pasteKind(c, {
+      paneId: destPaneId,
+      containerId: destContainer,
+    });
+    if (!c || kind === "none" || kind === "own") return;
+    if (kind === "unsupported") {
+      toast.error(t("containerFiles.localToLocal"));
+      return;
+    }
+    const ok = await transfer({
+      from: { containerId: c.containerId, items: c.items },
+      to: { containerId: destContainer, dir },
+      move: c.mode === "cut",
+      // The paste is the confirmation: a cut from this computer goes to the trash.
+      trashLocalSource: true,
+    });
+    // Only the clipboard that was pasted may be cleared, not a newer one.
+    if (clipRef.current === c) setClip(afterPaste(c, ok));
+    // The files of a pasted Cut are gone: the OS clipboard must not list them.
+    if (ok && c.mode === "cut" && c.containerId === null) {
+      void clearOsClipboardAfterCut(c.items.map((i) => i.path));
+    }
+  };
+
+  /**
+   * Paste in the local pane. When Explorer copied after the workspace
+   * clipboard was set, the OS clipboard is the newest: those files are on this
+   * computer already, so there is nothing to transfer (local to local).
+   */
+  const pasteIntoLocal = async (paneId: string, dir: string) => {
+    const c = clipRef.current;
+    if (
+      c &&
+      clipboardWinner({ hasInternal: true, ...clipboardTimes() }) === "os"
+    ) {
+      try {
+        if (supportsOsFileClipboard(await localPlatform())) {
+          const { files, own } = await readExplorerClipboard();
+          const local =
+            c.containerId === null ? c.items.map((i) => i.path) : null;
+          const action = explorerPasteAction({
+            fileCount: files.length,
+            own,
+            hasInternal: true,
+            matchesInternal:
+              !!local &&
+              samePaths(
+                files.map((f) => f.path),
+                local,
+              ),
+          });
+          if (action === "upload") {
+            toast.error(t("containerFiles.localToLocal"));
+            return;
+          }
+        }
+      } catch (error) {
+        toast.error(
+          t("containerFiles.osClipboardReadFailed", {
+            error: clipboardErrorText(error, t),
+          }),
+        );
+        return;
+      }
+      if (clipRef.current !== c) return;
+    }
+    await pasteInto(paneId, dir);
+  };
+
+  const localClipboard = (paneId: string) => ({
+    cutPaths: cutPaths(clip, paneId),
+    canPaste: !!clip,
+    set: (items: ClipItem[], mode: ClipMode) => {
+      putClip(makeClipboard(paneId, null, items, mode));
+      // Desktop on Windows: Explorer sees the real files too, and the OS
+      // clipboard no longer holds an older container copy.
+      void copyLocalToOsClipboard({ t, paths: items.map((i) => i.path) });
+    },
+    paste: (dir: string) => void pasteIntoLocal(paneId, dir),
+    clear: () => setClip(null),
+    active: !!clip,
+  });
+
   const makeBridge = (
     pane: ContainerPane & { containerId: string },
   ): PaneBridge => {
@@ -282,34 +406,52 @@ function WorkspaceInner(props: WorkspaceProps) {
         if (api) apis.current.set(pane.id, api);
         else apis.current.delete(pane.id);
       },
-      setClipboard: (items, cut) =>
-        setClip({
-          paneId: pane.id,
-          containerId: pane.containerId,
-          files: items.map((f) => ({
-            path: f.path,
-            name: f.name,
-            isDirectory: f.type === "directory",
-          })),
-          cut,
-        }),
+      setClipboard: (items, cut) => {
+        putClip(
+          makeClipboard(
+            pane.id,
+            pane.containerId,
+            items.map((f) => ({
+              path: f.path,
+              name: f.name,
+              isDirectory: f.type === "directory",
+            })),
+            cut ? "cut" : "copy",
+          ),
+        );
+      },
       hasClipboard: !!clip && clip.paneId !== pane.id,
+      localClipboardPaths: () => {
+        const c = clipRef.current;
+        return c && c.containerId === null ? c.items.map((i) => i.path) : null;
+      },
+      cutPaths: cutPaths(clip, pane.id),
+      ownsClipboard: clip?.paneId === pane.id,
+      clearClipboard: () => setClip(null),
       paste: async (destDir) => {
         const c = clipRef.current;
-        if (!c) return false;
-        if (c.paneId === pane.id) {
-          if (c.cut) setClip(null);
+        const kind = pasteKind(c, {
+          paneId: pane.id,
+          containerId: pane.containerId,
+        });
+        if (kind === "none") return false;
+        if (kind === "own") {
+          if (c?.mode === "cut") setClip(null);
           return false;
         }
-        const cut = c.cut;
-        const ok = await transfer({
-          from: { containerId: c.containerId, items: c.files },
-          to: { containerId: pane.containerId, dir: destDir },
-          move: cut,
-        });
-        if (ok && cut) setClip(null);
+        // A single selected folder is the target, like dropping on it.
+        const selection = (apis.current.get(pane.id)?.getSelection() ?? []).map(
+          (f) => ({ path: f.path, isDirectory: f.type === "directory" }),
+        );
+        await pasteInto(pane.id, resolvePasteTarget(destDir, selection));
         return true;
       },
+      pasteLocalPaths: (destDir, items) =>
+        transfer({
+          from: { containerId: null, items },
+          to: { containerId: pane.containerId, dir: destDir },
+          move: false,
+        }),
     };
   };
 
@@ -496,6 +638,7 @@ function WorkspaceInner(props: WorkspaceProps) {
                       false,
                     );
                   }}
+                  clipboard={localClipboard(pane.id)}
                   onUploadToRemote={(paths) =>
                     void uploadFromLocal(paths, pane.id)
                   }
@@ -528,8 +671,7 @@ function WorkspaceInner(props: WorkspaceProps) {
                   containers.find((c) => c.id === pane.containerId) ?? null
                 }
                 isVisible={props.isVisible}
-                runtime={props.runtime}
-                hostConfig={props.hostConfig}
+                origin={originOfSession(sessionId)}
                 onStateChange={(state) =>
                   pane.containerId &&
                   props.onContainerState(pane.containerId, state)

@@ -1,0 +1,25 @@
+diff --git a/FileManagerContextMenu.tsx b/FileManagerContextMenu.tsx
+index cfb9220..cf32b42 100644
+--- a/FileManagerContextMenu.tsx
++++ b/FileManagerContextMenu.tsx
+@@ -25,2 +25,3 @@ import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+ import { Kbd, KbdKey, KbdSeparator } from "@termix-ssh/plugin-sdk/ui";
++import { isExtractableArchive } from "../../archivePath";
+ 
+@@ -302,15 +303,3 @@ export function FileManagerContextMenu({
+       const fileName = files[0].name.toLowerCase();
+-      const isArchive =
+-        fileName.endsWith(".zip") ||
+-        fileName.endsWith(".tar") ||
+-        fileName.endsWith(".tar.gz") ||
+-        fileName.endsWith(".tgz") ||
+-        fileName.endsWith(".tar.bz2") ||
+-        fileName.endsWith(".tbz2") ||
+-        fileName.endsWith(".tar.xz") ||
+-        fileName.endsWith(".gz") ||
+-        fileName.endsWith(".bz2") ||
+-        fileName.endsWith(".xz") ||
+-        fileName.endsWith(".7z") ||
+-        fileName.endsWith(".rar");
++      const isArchive = isExtractableArchive(fileName);
+ 

@@ -1,0 +1,47 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 92b9555..2c0b6a7 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -137,6 +137,10 @@ interface FileManagerGridProps {
+   scrollResetKey?: string;
+   /** Marks entries that are container mount points: blue icon, RW/RO label, where it points. */
+   mountMark?: (file: FileItem) => MountMark | null;
++  /** Hint text when dropping `dragged` on the file `target` does something (null: nothing). */
++  fileDropHint?: (dragged: FileItem[], target: FileItem) => string | null;
++  /** Called instead of the diff when `fileDropHint` accepted the drop. */
++  onDropOnFile?: (dragged: FileItem[], target: FileItem) => void;
+ }
+ 
+ const getFileTypeColor = (file: FileItem): string => {
+@@ -297,6 +301,8 @@ export function FileManagerGrid({
+   onNavigateUp,
+   scrollResetKey,
+   mountMark,
++  fileDropHint,
++  onDropOnFile,
+ }: FileManagerGridProps) {
+   const { t } = useTranslation();
+   const gridRef = useRef<HTMLDivElement>(null);
+@@ -569,6 +575,8 @@ export function FileManagerGrid({
+ 
+     if (targetFile.type === "directory") {
+       onFileDrop?.(dragState.files, targetFile);
++    } else if (fileDropHint?.(dragState.files, targetFile)) {
++      onDropOnFile?.(dragState.files, targetFile);
+     } else if (
+       targetFile.type === "file" &&
+       dragState.files.length === 1 &&
+@@ -1707,6 +1715,13 @@ export function FileManagerGrid({
+                         })}
+                       </span>
+                     </>
++                  ) : fileDropHint?.(files, dragState.target) ? (
++                    <>
++                      <Move className="size-3.5 text-accent-brand" />
++                      <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">
++                        {fileDropHint(files, dragState.target)}
++                      </span>
++                    </>
+                   ) : (
+                     <>
+                       <GitCompare className="size-3.5 text-accent-brand" />

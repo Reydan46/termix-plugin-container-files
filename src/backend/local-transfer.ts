@@ -1,5 +1,5 @@
 import { posix, win32 } from "node:path";
-import type { Readable, Writable } from "node:stream";
+import { Transform, type Readable, type Writable } from "node:stream";
 import tar from "tar-stream";
 import type { PluginDesktopLocal } from "@termix-ssh/plugin-sdk/backend";
 import { duBytes, ownRename } from "./c2c.js";
@@ -7,6 +7,7 @@ import { openCpSource } from "./channel-stream.js";
 import { cpUpload } from "./cp-io.js";
 import type { ListTarget } from "./fs-list.js";
 import { HttpError, partName } from "./helpers.js";
+import { RemoteContainer, remoteTransferId } from "./remote-side.js";
 import { checkEntryName, sanitizeTar } from "./tar.js";
 import { localBaseName, packWalk } from "./tar-local.js";
 import {
@@ -92,6 +93,92 @@ export async function uploadFromLocal(
   };
 }
 
+/**
+ * Same as `uploadFromLocal` for a container on the linked server: the tar (or
+ * the single file) goes up through the desktop link and the server writes it
+ * into the container, owner and temporary name included.
+ */
+export async function uploadFromLocalRemote(
+  rc: RemoteContainer,
+  fs: LocalFs,
+  transfer: Transfer,
+  params: LocalUploadParams,
+): Promise<{ files: number; dirs: number }> {
+  const { signal } = transfer.controller;
+  const skip = new Set(params.skip ?? []);
+  const roots = params.localPaths.filter((p) => !skip.has(localBaseName(p)));
+  if (roots.length === 0) return { files: 0, dirs: 0 };
+
+  const walk = await fs.walk(roots);
+  signal.throwIfAborted();
+  transfer.total = walk.totalBytes;
+  const rename = ownRename(params.renames);
+  const remoteId = remoteTransferId(transfer.id, "u");
+  const counts = { files: walk.files.length, dirs: walk.emptyDirs.length };
+
+  const lone =
+    walk.files.length === 1 &&
+    walk.emptyDirs.length === 0 &&
+    !walk.files[0].relativePath.replace(/\\/g, "/").includes("/")
+      ? walk.files[0]
+      : null;
+
+  const stop = () => void rc.cancel(remoteId);
+  signal.addEventListener("abort", stop, { once: true });
+  try {
+    if (lone) {
+      const opened = await fs.openRead(lone.localPath);
+      const counter = new Transform({
+        transform(chunk: Buffer, _enc, done) {
+          transfer.bytes += chunk.length;
+          done(null, chunk);
+        },
+      });
+      const source = opened.stream as unknown as Readable;
+      source.once("error", (error) => counter.destroy(error));
+      source.pipe(counter);
+      try {
+        await rc.uploadFile(
+          params.dir,
+          rename(lone.relativePath),
+          opened.size,
+          counter,
+          { transferId: remoteId, signal },
+        );
+      } finally {
+        source.destroy();
+      }
+      return counts;
+    }
+
+    const pack = packWalk(walk, roots, (p) => fs.openRead(p), {
+      signal,
+      onBytes: (n) => (transfer.bytes += n),
+    });
+    const sanitized = sanitizeTar(pack as unknown as Readable, { rename });
+    // Keep the reason a pack broke: the fetch only reports a closed body.
+    let broken: Error | undefined;
+    sanitized.once("error", (error) => (broken = error));
+    try {
+      await rc.uploadTar(
+        params.dir,
+        sanitized as unknown as AsyncIterable<Buffer>,
+        remoteId,
+        signal,
+      );
+    } catch (error) {
+      if (signal.aborted) throw new HttpError(499, "Cancelled", "CANCELLED");
+      throw broken ?? error;
+    } finally {
+      pack.destroy();
+      sanitized.destroy();
+    }
+  } finally {
+    signal.removeEventListener("abort", stop);
+  }
+  return counts;
+}
+
 export interface LocalDownloadParams {
   paths: string[];
   localDir: string;
@@ -154,30 +241,55 @@ export function localTarget(root: string, rel: string): string {
   return full;
 }
 
-/**
- * Downloads container paths into a local folder by unpacking the `cp` tar
- * entry by entry. Files are written next to their final name and published
- * when complete; a cancel or error aborts the partial file.
- */
-export async function downloadToLocal(
-  t: ListTarget,
+/** Where a download lands: one local folder, shared by every source path. */
+interface LocalSink {
+  fs: LocalFs;
+  transfer: Transfer;
+  root: ReturnType<typeof normalizeLocalDir>;
+  rename: (top: string) => string;
+  result: LocalDownloadResult;
+  ensured: Set<string>;
+}
+
+function openSink(
   fs: LocalFs,
   transfer: Transfer,
   params: LocalDownloadParams,
-): Promise<LocalDownloadResult> {
-  const { signal } = transfer.controller;
-  const skip = new Set(params.skip ?? []);
-  const paths = params.paths.filter((p) => !skip.has(posix.basename(p)));
-  transfer.total = await duBytes(t, paths, signal);
-  const rename = ownRename(params.renames);
-  const result: LocalDownloadResult = {
-    files: 0,
-    dirs: 0,
-    skipped: [],
-    bytesWritten: 0,
+): LocalSink {
+  return {
+    fs,
+    transfer,
+    root: normalizeLocalDir(params.localDir),
+    rename: ownRename(params.renames),
+    result: { files: 0, dirs: 0, skipped: [], bytesWritten: 0 },
+    ensured: new Set<string>(),
   };
-  const ensured = new Set<string>();
-  const root = normalizeLocalDir(params.localDir);
+}
+
+/** Never report success when nothing reached the disk. */
+function closeSink(sink: LocalSink, pathCount: number): LocalDownloadResult {
+  const { result, root } = sink;
+  if (pathCount > 0 && result.files + result.dirs === 0) {
+    throw new HttpError(
+      500,
+      result.firstError
+        ? `Nothing was written to ${root.path}: ${result.firstError}`
+        : `Nothing was written to ${root.path}`,
+      "NOTHING_WRITTEN",
+      { skipped: result.skipped },
+    );
+  }
+  return result;
+}
+
+/**
+ * Unpacks one `cp` tar stream into the local folder entry by entry. Files are
+ * written next to their final name and published when complete; a cancel or
+ * error aborts the partial file.
+ */
+async function writeTarToLocal(sink: LocalSink, input: Readable) {
+  const { fs, transfer, root, rename, result, ensured } = sink;
+  const { signal } = transfer.controller;
 
   const ensureDir = async (dir: string) => {
     if (ensured.has(dir)) return;
@@ -190,6 +302,93 @@ export async function downloadToLocal(
     ensured.add(dir);
   };
 
+  await unpack(input, signal, async (header, body) => {
+    const name = checkEntryName(header.name).replace(/\/+$/, "");
+    const [top, ...rest] = name.split("/");
+    const rel = [rename(top), ...rest].join("/");
+    if (header.type !== "file" && header.type !== "directory") {
+      result.skipped.push(name);
+      body.resume();
+      return;
+    }
+    let dest: string;
+    try {
+      dest = localTarget(root.path, rel);
+    } catch (error) {
+      body.resume();
+      throw error;
+    }
+    try {
+      if (header.type === "directory") {
+        await ensureDir(dest);
+        result.dirs++;
+        body.resume();
+        return;
+      }
+      await ensureDir(root.api.dirname(dest));
+      const download = await fs.openDownload({
+        rootPath: root.path,
+        destPath: dest,
+        transferId: transfer.id,
+        overwrite: true,
+      });
+      try {
+        let received = 0;
+        body.on("data", (chunk: Buffer) => (received += chunk.length));
+        await new Promise<void>((done, fail) => {
+          const onAbort = () =>
+            fail(new HttpError(499, "Cancelled", "CANCELLED"));
+          signal.addEventListener("abort", onAbort, { once: true });
+          download.stream.once("finish", () => {
+            signal.removeEventListener("abort", onAbort);
+            done();
+          });
+          download.stream.once("error", fail);
+          body.once("error", fail);
+          body.pipe(download.stream);
+        });
+        // Windows cannot rename a file that is still open: wait for close.
+        await streamClosed(download.stream);
+        if (received !== (header.size ?? 0)) {
+          throw new Error(
+            `Incomplete file ${name}: ${received} of ${header.size ?? 0} bytes`,
+          );
+        }
+        await download.publish({ overwrite: true });
+        result.files++;
+        result.bytesWritten += received;
+      } catch (error) {
+        (download.stream as unknown as Writable).destroy?.();
+        await download.abort().catch(() => {});
+        throw error;
+      }
+    } catch (error) {
+      if (signal.aborted || error instanceof HttpError) throw error;
+      // The local disk refused this one (name, permissions): report it.
+      result.skipped.push(name);
+      result.firstError ??=
+        error instanceof Error ? error.message : String(error);
+      body.resume();
+    }
+  });
+}
+
+/**
+ * Downloads container paths into a local folder by unpacking the `cp` tar
+ * entry by entry.
+ */
+export async function downloadToLocal(
+  t: ListTarget,
+  fs: LocalFs,
+  transfer: Transfer,
+  params: LocalDownloadParams,
+): Promise<LocalDownloadResult> {
+  const { signal } = transfer.controller;
+  const skip = new Set(params.skip ?? []);
+  const paths = params.paths.filter((p) => !skip.has(posix.basename(p)));
+  transfer.total = await duBytes(t, paths, signal);
+  const sink = openSink(fs, transfer, params);
+
   for (const path of paths) {
     if (path === "/") throw new HttpError(400, "Cannot copy the root");
     const source = await openCpSource(
@@ -199,91 +398,49 @@ export async function downloadToLocal(
       signal,
     );
     try {
-      await unpack(source.stream, signal, async (header, body) => {
-        const name = checkEntryName(header.name).replace(/\/+$/, "");
-        const [top, ...rest] = name.split("/");
-        const rel = [rename(top), ...rest].join("/");
-        if (header.type !== "file" && header.type !== "directory") {
-          result.skipped.push(name);
-          body.resume();
-          return;
-        }
-        let dest: string;
-        try {
-          dest = localTarget(root.path, rel);
-        } catch (error) {
-          body.resume();
-          throw error;
-        }
-        try {
-          if (header.type === "directory") {
-            await ensureDir(dest);
-            result.dirs++;
-            body.resume();
-            return;
-          }
-          await ensureDir(root.api.dirname(dest));
-          const download = await fs.openDownload({
-            rootPath: root.path,
-            destPath: dest,
-            transferId: transfer.id,
-            overwrite: true,
-          });
-          try {
-            let received = 0;
-            body.on("data", (chunk: Buffer) => (received += chunk.length));
-            await new Promise<void>((done, fail) => {
-              const onAbort = () =>
-                fail(new HttpError(499, "Cancelled", "CANCELLED"));
-              signal.addEventListener("abort", onAbort, { once: true });
-              download.stream.once("finish", () => {
-                signal.removeEventListener("abort", onAbort);
-                done();
-              });
-              download.stream.once("error", fail);
-              body.once("error", fail);
-              body.pipe(download.stream);
-            });
-            // Windows cannot rename a file that is still open: wait for close.
-            await streamClosed(download.stream);
-            if (received !== (header.size ?? 0)) {
-              throw new Error(
-                `Incomplete file ${name}: ${received} of ${header.size ?? 0} bytes`,
-              );
-            }
-            await download.publish({ overwrite: true });
-            result.files++;
-            result.bytesWritten += received;
-          } catch (error) {
-            (download.stream as unknown as Writable).destroy?.();
-            await download.abort().catch(() => {});
-            throw error;
-          }
-        } catch (error) {
-          if (signal.aborted || error instanceof HttpError) throw error;
-          // The local disk refused this one (name, permissions): report it.
-          result.skipped.push(name);
-          result.firstError ??=
-            error instanceof Error ? error.message : String(error);
-          body.resume();
-        }
-      });
+      await writeTarToLocal(sink, source.stream);
     } finally {
       source.close();
     }
   }
-  // Never report success when nothing reached the disk.
-  if (paths.length > 0 && result.files + result.dirs === 0) {
-    throw new HttpError(
-      500,
-      result.firstError
-        ? `Nothing was written to ${root.path}: ${result.firstError}`
-        : `Nothing was written to ${root.path}`,
-      "NOTHING_WRITTEN",
-      { skipped: result.skipped },
+  return closeSink(sink, paths.length);
+}
+
+/**
+ * Same as `downloadToLocal` for a container on the linked server: each path
+ * arrives as the server's `cp` tar over the desktop link.
+ */
+export async function downloadToLocalRemote(
+  rc: RemoteContainer,
+  fs: LocalFs,
+  transfer: Transfer,
+  params: LocalDownloadParams,
+): Promise<LocalDownloadResult> {
+  const { signal } = transfer.controller;
+  const skip = new Set(params.skip ?? []);
+  const paths = params.paths.filter((p) => !skip.has(posix.basename(p)));
+  transfer.total = await rc.duBytes(paths, signal);
+  const sink = openSink(fs, transfer, params);
+
+  for (const [i, path] of paths.entries()) {
+    if (path === "/") throw new HttpError(400, "Cannot copy the root");
+    const remoteId = remoteTransferId(transfer.id, `d${i}`);
+    const stream = await rc.openTar(
+      path,
+      remoteId,
+      signal,
+      (n) => (transfer.bytes += n),
     );
+    const stop = () => void rc.cancel(remoteId);
+    signal.addEventListener("abort", stop, { once: true });
+    try {
+      await writeTarToLocal(sink, stream);
+    } finally {
+      signal.removeEventListener("abort", stop);
+      stream.destroy();
+    }
   }
-  return result;
+  return closeSink(sink, paths.length);
 }
 
 /** Resolves once a finished write stream released its file (or cannot say). */

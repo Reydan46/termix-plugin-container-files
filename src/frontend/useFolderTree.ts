@@ -4,6 +4,7 @@ import {
   TREE_NODE_CAP,
   directoriesOnly,
   expansionChain,
+  keepExpanded,
   mergeChildren,
   type TreeDir,
   type TreeEntry,
@@ -177,8 +178,9 @@ export function useFolderTree(
     if (!isOpen && !nodesRef.current[path]) void load(path);
   };
 
-  /** Reloads every expanded node (after a mutation). */
+  /** Reloads every expanded node and forgets the collapsed ones. */
   const refresh = () => {
+    setNodes((n) => keepExpanded(n, expanded));
     for (const p of expanded) void load(p);
   };
 

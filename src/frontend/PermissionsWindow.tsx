@@ -1,4 +1,5 @@
 import React from "react";
+import { DIALOG_DEFAULT } from "./popup/useDialogKeys";
 import { Checkbox, Input } from "@termix-ssh/plugin-sdk/ui";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { usePopupWindow } from "./popup/PopupContext";
@@ -130,7 +131,9 @@ export function PermissionsWindow({
     let cancelled = false;
     fetchPrincipals(containerKey)
       .then((value) => !cancelled && setPrincipals(value))
-      .catch(() => {});
+      .catch(() => {
+        // The owner and group lists are only suggestions; typing still works.
+      });
     return () => {
       cancelled = true;
     };
@@ -345,6 +348,7 @@ export function PermissionsWindow({
         </button>
         <button
           type="button"
+          {...DIALOG_DEFAULT}
           disabled={!valid || saving}
           className={POPUP_BUTTON_PRIMARY}
           onClick={() => void save()}

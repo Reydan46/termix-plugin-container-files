@@ -73,3 +73,18 @@ export function isWithin(path: string, ancestor: string): boolean {
     ancestor === "/" || path === ancestor || path.startsWith(`${ancestor}/`)
   );
 }
+
+/**
+ * The nodes worth keeping when the listings are reloaded: the expanded ones,
+ * which are reloaded right away. A collapsed node would otherwise keep its old
+ * children and show them stale when it is opened again.
+ */
+export function keepExpanded(
+  nodes: TreeNodes,
+  expanded: ReadonlySet<string>,
+): TreeNodes {
+  const kept: TreeNodes = {};
+  for (const [path, node] of Object.entries(nodes))
+    if (expanded.has(path)) kept[path] = node;
+  return kept;
+}

@@ -2,6 +2,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@termix-ssh/plugin-sdk/ui";
 import {
   Clipboard,
+  ClipboardPaste,
+  Copy,
   Edit3,
   Eye,
   EyeOff,
@@ -10,6 +12,7 @@ import {
   FolderOpen,
   FolderPlus,
   RefreshCw,
+  Scissors,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -38,6 +41,12 @@ export interface LocalFileContextMenuProps {
   onRefresh: () => void;
   onToggleHidden: () => void;
   onDelete: (entries: LocalFileEntry[]) => void;
+  /** Copy / Cut / Paste into the workspace clipboard; absent hides them. */
+  onCopy?: (entries: LocalFileEntry[]) => void;
+  onCut?: (entries: LocalFileEntry[]) => void;
+  /** `folder` is the folder entry the menu was opened on, if any. */
+  onPaste?: (folder?: LocalFileEntry) => void;
+  canPaste?: boolean;
 }
 
 interface MenuItem {
@@ -73,6 +82,10 @@ export function LocalFileContextMenu({
   onRefresh,
   onToggleHidden,
   onDelete,
+  onCopy,
+  onCut,
+  onPaste,
+  canPaste = false,
 }: LocalFileContextMenuProps) {
   const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -185,6 +198,35 @@ export function LocalFileContextMenu({
       });
     }
 
+    if (onCopy) {
+      menuItems.push({
+        icon: <Copy className="size-3.5" />,
+        label: isSingle
+          ? t("fileManager.copy")
+          : t("fileManager.copyFiles", { count: entries.length }),
+        action: () => onCopy(entries),
+        shortcut: "Ctrl+C",
+      });
+    }
+    if (onCut) {
+      menuItems.push({
+        icon: <Scissors className="size-3.5" />,
+        label: isSingle
+          ? t("fileManager.cut")
+          : t("fileManager.cutFiles", { count: entries.length }),
+        action: () => onCut(entries),
+        shortcut: "Ctrl+X",
+      });
+    }
+    if (onPaste && canPaste && single?.type === "directory") {
+      menuItems.push({
+        icon: <ClipboardPaste className="size-3.5" />,
+        label: t("fileManager.paste"),
+        action: () => onPaste(single),
+        shortcut: "Ctrl+V",
+      });
+    }
+
     menuItems.push({
       icon: <Clipboard className="size-3.5" />,
       label: isSingle ? t("fileManager.copyPath") : t("fileManager.copyPaths"),
@@ -213,6 +255,14 @@ export function LocalFileContextMenu({
       label: t("fileManager.newFile"),
       action: onNewFile,
     });
+    if (onPaste && canPaste) {
+      menuItems.push({
+        icon: <ClipboardPaste className="size-3.5" />,
+        label: t("fileManager.paste"),
+        action: () => onPaste(),
+        shortcut: "Ctrl+V",
+      });
+    }
     menuItems.push({ separator: true });
     menuItems.push({
       icon: <FolderOpen className="size-3.5" />,

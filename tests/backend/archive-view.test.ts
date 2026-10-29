@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extensionOf,
   innerCrumbs,
+  keepExisting,
   sortEntries,
   summarize,
   type ViewEntry,
@@ -82,5 +83,22 @@ describe("paths", () => {
       { name: "a", path: "/a" },
       { name: "b", path: "/a/b" },
     ]);
+  });
+});
+
+describe("keepExisting", () => {
+  it("drops selected names that are gone after a reload", () => {
+    const kept = keepExisting(new Set(["a", "b", "c"]), [
+      { name: "a" },
+      { name: "c" },
+      { name: "d" },
+    ]);
+    expect([...kept].sort()).toEqual(["a", "c"]);
+  });
+  it("returns the same set when nothing changed, so state stays put", () => {
+    const sel = new Set(["a"]);
+    expect(keepExisting(sel, [{ name: "a" }, { name: "new" }])).toBe(sel);
+    const empty = new Set<string>();
+    expect(keepExisting(empty, [])).toBe(empty);
   });
 });

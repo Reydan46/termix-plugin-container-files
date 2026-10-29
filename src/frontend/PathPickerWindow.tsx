@@ -1,4 +1,5 @@
 import React from "react";
+import { DIALOG_DEFAULT } from "./popup/useDialogKeys";
 import { ArrowUp, File, Folder } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { usePopupWindow } from "./popup/PopupContext";
@@ -39,11 +40,13 @@ export function PathPickerWindow({
   containerKey,
   initialDir,
   mode,
+  fileFilter,
   onPick,
 }: {
   containerKey: string;
   initialDir: string;
   mode: "folder" | "any";
+  fileFilter?: (name: string) => boolean;
   onPick: (path: string) => void;
 }): React.ReactElement {
   const { t } = useTranslation();
@@ -65,7 +68,11 @@ export function PathPickerWindow({
         if (cancelled) return;
         setEntries(
           result.files
-            .filter((f) => mode === "any" || f.type === "directory")
+            .filter((f) =>
+              f.type === "directory"
+                ? true
+                : mode === "any" && (!fileFilter || fileFilter(f.name)),
+            )
             .map((f) => ({
               name: f.name,
               path: f.path,
@@ -89,9 +96,10 @@ export function PathPickerWindow({
       cancelled = true;
       controller.abort();
     };
-  }, [containerKey, dir, mode]);
+  }, [containerKey, dir, mode, fileFilter]);
 
-  const chosen = selected ?? dir;
+  // With a filter only a listed file can be picked, never the folder itself.
+  const chosen = selected ?? (fileFilter ? null : dir);
 
   return (
     <>
@@ -152,8 +160,11 @@ export function PathPickerWindow({
         </button>
         <button
           type="button"
-          className={POPUP_BUTTON_PRIMARY}
+          {...DIALOG_DEFAULT}
+          className={`${POPUP_BUTTON_PRIMARY} disabled:opacity-40`}
+          disabled={chosen === null}
           onClick={() => {
+            if (chosen === null) return;
             close();
             onPick(chosen);
           }}
@@ -169,6 +180,8 @@ interface PickOptions {
   title: string;
   initialDir: string;
   mode: "folder" | "any";
+  /** Shows only files whose name passes, and requires one to be selected. */
+  fileFilter?: (name: string) => boolean;
   onPick: (path: string) => void;
 }
 
@@ -216,6 +229,7 @@ export function usePathPicker(
           containerKey={containerKey}
           initialDir={opts.initialDir}
           mode={opts.mode}
+          fileFilter={opts.fileFilter}
           onPick={opts.onPick}
         />
       ),

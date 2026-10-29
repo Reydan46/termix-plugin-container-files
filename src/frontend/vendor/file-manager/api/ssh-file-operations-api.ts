@@ -1,5 +1,6 @@
 // Shim: the upstream module speaks SFTP over a session id; here the "session
 // id" is a container target key and everything goes to /containers/... routes.
+import { getApp } from "../../../app";
 import {
   ContainerApiError,
   downloadBlob,
@@ -16,6 +17,7 @@ import type { FileItem } from "../host-types";
 import { isPreviewableKind, previewSizeLimit } from "../../../mediaPreview";
 import { notifyEditRejected } from "../../../editGate";
 import { resolveFilePreviewKind } from "../file-preview-preload";
+import { throttleProgress } from "./preview-progress";
 
 /** Content strings starting with this are object URLs, not file data. */
 export const BLOB_URL_PREFIX = "blob:";
@@ -36,27 +38,40 @@ async function downloadAsObjectUrl(
   sessionId: string,
   path: string,
   kind: string,
+  outer?: AbortSignal,
+  onProgress?: (loaded: number, total?: number) => void,
 ): Promise<string> {
   const limit = previewSizeLimit(kind);
   const controller = new AbortController();
+  const report = onProgress && throttleProgress(onProgress);
   let tooLarge = false;
+  // The viewer closing (or switching file) stops the download at once.
+  const onOuterAbort = () => controller.abort();
+  if (outer?.aborted) onOuterAbort();
+  else outer?.addEventListener("abort", onOuterAbort, { once: true });
   try {
     const { blob } = await downloadBlob(sessionId, path, "file", {
       signal: controller.signal,
       onProgress: (loaded, total) => {
+        report?.(loaded, total);
         if ((total ?? loaded) > limit) {
           tooLarge = true;
           controller.abort();
         }
       },
     });
+    if (outer?.aborted) throw new DOMException("Aborted", "AbortError");
     return URL.createObjectURL(blob);
   } catch (error) {
+    // Whatever the browser reports for a cancelled fetch, the caller sees an abort.
+    if (outer?.aborted) throw new DOMException("Aborted", "AbortError");
     if (tooLarge)
       throw new ContainerApiError(
         "The file is too large to preview in this browser. Download it instead.",
       );
     throw error;
+  } finally {
+    outer?.removeEventListener("abort", onOuterAbort);
   }
 }
 
@@ -93,7 +108,12 @@ function blobToBase64(blob: Blob): Promise<string> {
 export async function readSSHFile(
   sessionId: string,
   path: string,
-  _options: { force?: boolean } = {},
+  options: {
+    force?: boolean;
+    signal?: AbortSignal;
+    /** Download progress of a media/PDF preview (throttled). */
+    onProgress?: (loaded: number, total?: number) => void;
+  } = {},
 ): Promise<{
   content: string;
   path: string;
@@ -101,11 +121,20 @@ export async function readSSHFile(
 }> {
   const kind = resolveFilePreviewKind(path.split("/").pop() ?? path);
   if (isPreviewableKind(kind)) {
-    return {
-      content: await downloadAsObjectUrl(sessionId, path, kind),
+    const url = await downloadAsObjectUrl(
+      sessionId,
       path,
-      encoding: "blob-url",
-    };
+      kind,
+      options.signal,
+      options.onProgress,
+    );
+    // The viewer may have closed while the result was on its way: nobody owns
+    // the object URL any more, so free it here instead of leaking the Blob.
+    if (options.signal?.aborted) {
+      URL.revokeObjectURL(url);
+      throw new DOMException("Aborted", "AbortError");
+    }
+    return { content: url, path, encoding: "blob-url" };
   }
   try {
     const file = await readTextFile(sessionId, path);
@@ -153,7 +182,7 @@ export async function connectSSH(
   _sessionId?: string,
   _config?: unknown,
 ): Promise<never> {
-  throw new Error("The SSH session to the host is closed. Reopen the tab.");
+  throw new Error(getApp().t("containerFiles.sessionClosed"));
 }
 
 export async function setSudoPassword(

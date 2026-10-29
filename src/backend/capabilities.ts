@@ -1,5 +1,6 @@
 import { runCommand } from "./exec.js";
 import { execScriptCommand } from "./shell-quote.js";
+import { firstTool, SEVENZ_TOOLS } from "./archive-kinds.js";
 import { getContainerState } from "./containers.js";
 import type { ContainerSession } from "./sessions.js";
 
@@ -13,6 +14,12 @@ export interface Capabilities {
   /** `stat -c` (BusyBox or GNU). */
   statC: boolean;
   tools: string[];
+  /** Which tar the container has; absent when none was found. */
+  tarFlavor?: TarFlavor;
+  /** Per archive kind: whether files can be added to such an archive. */
+  appendSupport?: AppendSupport;
+  /** Per archive kind: whether entries can be deleted from such an archive. */
+  deleteSupport?: DeleteSupport;
   /** Why `exec` is false (machine-readable); absent when exec works. */
   reason?: LimitReason;
   /** Engine status (running, paused, exited, ...). */
@@ -21,6 +28,107 @@ export interface Capabilities {
   detail?: string;
   /** Podman rootless symptoms were seen in the failure. */
   rootless?: boolean;
+}
+
+export type TarFlavor = "gnu" | "busybox" | "bsd" | "other";
+
+export type AppendVerdict =
+  | { ok: true }
+  | { ok: false; reason: "busybox-tar" | "no-tool"; tool?: string };
+
+export type AppendKind = "zip" | "tar" | "tgz" | "tbz" | "txz" | "tzst" | "7z";
+
+export type AppendSupport = Record<AppendKind, AppendVerdict>;
+
+export type DeleteVerdict =
+  { ok: true } | { ok: false; reason: "gnu-tar" | "no-tool"; tool?: string };
+
+export type DeleteSupport = Record<AppendKind, DeleteVerdict>;
+
+const COMPRESSORS = {
+  tgz: "gzip",
+  tbz: "bzip2",
+  txz: "xz",
+  tzst: "zstd",
+} as const;
+
+/** Name a missing 7z tool the way the messages do. */
+const SEVENZ_LABEL = "7z";
+
+/**
+ * What the append script (archive-append.ts) will be able to do, decided from
+ * the probe: zip needs zip; 7z needs any 7-Zip build; tar needs a tar that is
+ * not BusyBox; compressed tars also need their compressor.
+ */
+export function computeAppendSupport(
+  tools: string[],
+  tarFlavor: TarFlavor | undefined,
+): AppendSupport {
+  const has = (tool: string) => tools.includes(tool);
+  const noTool = (tool: string): AppendVerdict => ({
+    ok: false,
+    reason: "no-tool",
+    tool,
+  });
+  const tarVerdict = (): AppendVerdict =>
+    !has("tar")
+      ? noTool("tar")
+      : tarFlavor === "busybox"
+        ? { ok: false, reason: "busybox-tar" }
+        : { ok: true };
+  const compressed = (kind: keyof typeof COMPRESSORS): AppendVerdict => {
+    const tar = tarVerdict();
+    if (!tar.ok) return tar;
+    const tool = COMPRESSORS[kind];
+    return has(tool) ? { ok: true } : noTool(tool);
+  };
+  return {
+    zip: has("zip") ? { ok: true } : noTool("zip"),
+    tar: tarVerdict(),
+    tgz: compressed("tgz"),
+    tbz: compressed("tbz"),
+    txz: compressed("txz"),
+    tzst: compressed("tzst"),
+    "7z": firstTool(tools, SEVENZ_TOOLS) ? { ok: true } : noTool(SEVENZ_LABEL),
+  };
+}
+
+/**
+ * What the delete script (archive-delete.ts) will be able to do: zip needs
+ * zip, 7z any 7-Zip build, tar kinds need GNU tar (`--delete`) and their
+ * compressor. A tar of unknown flavour is tried; BusyBox and bsdtar are not.
+ */
+export function computeDeleteSupport(
+  tools: string[],
+  tarFlavor: TarFlavor | undefined,
+): DeleteSupport {
+  const has = (tool: string) => tools.includes(tool);
+  const noTool = (tool: string): DeleteVerdict => ({
+    ok: false,
+    reason: "no-tool",
+    tool,
+  });
+  const tarVerdict = (): DeleteVerdict =>
+    !has("tar")
+      ? noTool("tar")
+      : tarFlavor === "busybox" || tarFlavor === "bsd"
+        ? { ok: false, reason: "gnu-tar" }
+        : { ok: true };
+  const compressed = (kind: keyof typeof COMPRESSORS): DeleteVerdict => {
+    const tar = tarVerdict();
+    if (!tar.ok) return tar;
+    const tool = COMPRESSORS[kind];
+    return has(tool) ? { ok: true } : noTool(tool);
+  };
+  return {
+    zip: has("zip") ? { ok: true } : noTool("zip"),
+    tar: tarVerdict(),
+    tgz: compressed("tgz"),
+    tbz: compressed("tbz"),
+    txz: compressed("txz"),
+    tzst: compressed("tzst"),
+    "7z": firstTool(tools, SEVENZ_TOOLS) ? { ok: true } : noTool(SEVENZ_LABEL),
+  };
 }
 
 export type LimitReason =
@@ -98,25 +206,59 @@ const TOOLS = [
   "readlink",
   "du",
   "zip",
+  "bzip2",
+  "xz",
+  "zstd",
+  "7zz",
+  "7z",
+  "7za",
+  "7zr",
+  "unrar",
+  "bsdtar",
 ];
 
 const PROBE_SCRIPT = `for c in ${TOOLS.join(" ")}; do command -v "$c" >/dev/null 2>&1 && echo "tool:$c"; done
 find / -maxdepth 0 -printf '' >/dev/null 2>&1 && echo findPrintf
 stat -c %s / >/dev/null 2>&1 && echo statC
+if command -v tar >/dev/null 2>&1; then
+  case "$(tar --version 2>&1; tar --help 2>&1)" in
+    *[Bb]usy[Bb]ox*) echo tarFlavor:busybox ;;
+    *GNU*) echo tarFlavor:gnu ;;
+    *bsdtar*|*libarchive*) echo tarFlavor:bsd ;;
+    *) echo tarFlavor:other ;;
+  esac
+fi
 echo probed`;
 
 export function parseProbe(output: string, running: boolean): Capabilities {
   const lines = new Set(output.split("\n").map((l) => l.trim()));
   const probed = lines.has("probed");
-  return {
+  const tools = [...lines]
+    .filter((l) => l.startsWith("tool:"))
+    .map((l) => l.slice(5));
+  const flavor = [...lines]
+    .find((l) => l.startsWith("tarFlavor:"))
+    ?.slice("tarFlavor:".length);
+  const tarFlavor =
+    flavor === "gnu" ||
+    flavor === "busybox" ||
+    flavor === "bsd" ||
+    flavor === "other"
+      ? flavor
+      : undefined;
+  const caps: Capabilities = {
     running,
     exec: running && probed,
     findPrintf: lines.has("findPrintf"),
     statC: lines.has("statC"),
-    tools: [...lines]
-      .filter((l) => l.startsWith("tool:"))
-      .map((l) => l.slice(5)),
+    tools,
   };
+  if (caps.exec) {
+    if (tarFlavor) caps.tarFlavor = tarFlavor;
+    caps.appendSupport = computeAppendSupport(tools, tarFlavor);
+    caps.deleteSupport = computeDeleteSupport(tools, tarFlavor);
+  }
+  return caps;
 }
 
 export async function getCapabilities(

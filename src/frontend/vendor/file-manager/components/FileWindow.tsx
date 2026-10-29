@@ -80,6 +80,10 @@ export function FileWindow({
 
   const [content, setContent] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
+  const [loadProgress, setLoadProgress] = useState<{
+    loaded: number;
+    total?: number;
+  } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isEditable, setIsEditable] = useState(false);
   const [pendingContent, setPendingContent] = useState<string>("");
@@ -121,6 +125,9 @@ export function FileWindow({
   };
 
   useEffect(() => {
+    // Closing the viewer or switching file cancels a download still running.
+    const controller = new AbortController();
+    setLoadProgress(null);
     const loadFileContent = async () => {
       if (file.type !== "file") return;
 
@@ -129,7 +136,13 @@ export function FileWindow({
 
         await ensureSSHConnection();
 
-        const response = await readSSHFile(sshSessionId, file.path);
+        const response = await readSSHFile(sshSessionId, file.path, {
+          signal: controller.signal,
+          onProgress: (loaded, total) => {
+            if (!controller.signal.aborted) setLoadProgress({ loaded, total });
+          },
+        });
+        if (controller.signal.aborted) return;
         let fileContent = response.content || "";
 
         if (response.encoding === "base64") {
@@ -198,6 +211,7 @@ export function FileWindow({
         const extension = file.name.split(".").pop()?.toLowerCase();
         setIsEditable(!mediaExtensions.includes(extension || ""));
       } catch (error: unknown) {
+        if (controller.signal.aborted) return;
         const err = error as {
           message?: string;
           isFileNotFound?: boolean;
@@ -261,11 +275,12 @@ export function FileWindow({
           }
         }
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
 
     loadFileContent();
+    return () => controller.abort();
   }, [file, sshSessionId, sshHost]);
 
   const handleRevert = async () => {
@@ -499,6 +514,8 @@ export function FileWindow({
         content={pendingContent || content}
         savedContent={content}
         isLoading={isLoading}
+        loadProgress={loadProgress}
+        onCancelLoad={handleClose}
         isSaving={isSaving}
         resetKey={resetKey}
         onRevert={handleRevert}

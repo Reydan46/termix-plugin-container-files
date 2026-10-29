@@ -90,7 +90,3 @@ export function safeRelative(value: unknown): string {
   }
   return parts.join("/");
 }
-
-export function joinPath(dir: string, name: string): string {
-  return posix.join(dir, name);
-}

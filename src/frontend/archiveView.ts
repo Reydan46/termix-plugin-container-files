@@ -72,6 +72,20 @@ export function summarize(
   return { items: entries.length, selected: sel, totalSize, selectedSize };
 }
 
+/**
+ * The selection after the folder was reloaded: names that are gone drop out.
+ * The same set comes back when nothing changed, so state does not re-render.
+ */
+export function keepExisting(
+  selected: Set<string>,
+  entries: readonly Pick<ViewEntry, "name">[],
+): Set<string> {
+  if (selected.size === 0) return selected;
+  const names = new Set(entries.map((e) => e.name));
+  const kept = [...selected].filter((n) => names.has(n));
+  return kept.length === selected.size ? selected : new Set(kept);
+}
+
 /** The inner folder as breadcrumb segments, each with its full inner path. */
 export function innerCrumbs(dir: string): { name: string; path: string }[] {
   const parts = dir.split("/").filter(Boolean);

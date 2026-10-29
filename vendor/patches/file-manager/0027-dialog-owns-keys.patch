@@ -1,0 +1,14 @@
+diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 05702e2..acb643e 100644
+--- a/FileManagerGrid.tsx
++++ b/FileManagerGrid.tsx
+@@ -12,2 +12,3 @@ import { useVirtualizer } from "@tanstack/react-virtual";
+ import { cn } from "@termix-ssh/plugin-sdk/ui";
++import { dialogOwnsKey } from "../../popup/keyGuard";
+ import { isActivePane, PANE_ATTR } from "../../paneFocus";
+@@ -1064,2 +1065,5 @@ export function FileManagerGrid({
+       if (!isActivePane(grid.closest(`[${PANE_ATTR}]`))) return;
++      // A key pressed in a dialog or window, or while a confirm card is open,
++      // belongs to that dialog (Enter must not open the selected file).
++      if (dialogOwnsKey(event)) return;
+ 

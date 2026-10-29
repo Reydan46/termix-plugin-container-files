@@ -11,6 +11,8 @@ import {
 import { isOrphaned, mustRaiseOverParent } from "./popupFamily";
 import { popupTitle } from "./popupTitle";
 import { PopupHeader } from "./PopupHeader";
+import { isTopmostWindow } from "./dialogKeys";
+import { focusDialogDefault, useDialogKeys } from "./useDialogKeys";
 
 export interface PopupFrameSpec {
   /** What the window is ("Archive"), shown first in the title. */
@@ -127,6 +129,19 @@ export function PopupFrame({
     setGeneration((g) => g + 1);
   }, [fitted, placement, spec]);
 
+  // Enter presses the window's default button, Escape closes it; only the
+  // topmost window answers. Bare windows (the archive browser) handle keys.
+  const onDialogKey = useDialogKeys({
+    rootRef: bodyRef,
+    topmost: isTopmostWindow(windowId, windows),
+    onCancel: () => closeWindow(windowId),
+    enabled: !spec.bare,
+  });
+  // Focus lands in the window, so the keys above have somewhere to start.
+  React.useEffect(() => {
+    if (placed && fitted && !spec.bare) focusDialogDefault(bodyRef.current);
+  }, [placed, fitted, generation, spec.bare]);
+
   // A child popup closes with its parent.
   const orphaned = isOrphaned(
     spec.parentId,
@@ -184,10 +199,12 @@ export function PopupFrame({
           >
             <div
               ref={bodyRef}
+              tabIndex={-1}
+              onKeyDown={onDialogKey}
               className={
                 spec.bare
-                  ? "h-full overflow-hidden bg-background text-xs"
-                  : "flex h-full flex-col gap-3 overflow-y-auto bg-background p-4 text-xs"
+                  ? "h-full overflow-hidden bg-background text-xs outline-none"
+                  : "flex h-full flex-col gap-3 overflow-y-auto bg-background p-4 text-xs outline-none"
               }
             >
               {children}
