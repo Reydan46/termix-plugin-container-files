@@ -26,7 +26,10 @@ export function activate(app: TermixApp): () => void {
     order: 31,
     tabType: "container-files",
     copyUrlView: "container-files",
-    when: (host) => canUse && !!host.enableSsh,
+    when: (host) =>
+      canUse &&
+      !!host.enableSsh &&
+      host.pluginSettings?.["container-files"]?.enableContainerFiles === true,
   });
   return () => {
     dispose();

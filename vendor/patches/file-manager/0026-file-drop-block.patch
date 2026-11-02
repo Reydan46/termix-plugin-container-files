@@ -1,5 +1,4 @@
 diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
-index 2778e04..05702e2 100644
 --- a/FileManagerGrid.tsx
 +++ b/FileManagerGrid.tsx
 @@ -29,6 +29,7 @@ import {
@@ -8,9 +7,9 @@ index 2778e04..05702e2 100644
    Move,
 +  Ban,
    GitCompare,
+   Loader2,
  } from "lucide-react";
- import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
-@@ -147,6 +148,8 @@ interface FileManagerGridProps {
+@@ -152,6 +153,8 @@ interface FileManagerGridProps {
    mountMark?: (file: FileItem) => MountMark | null;
    /** Hint text when dropping `dragged` on the file `target` does something (null: nothing). */
    fileDropHint?: (dragged: FileItem[], target: FileItem) => string | null;
@@ -19,7 +18,7 @@ index 2778e04..05702e2 100644
    /** Called instead of the diff when `fileDropHint` accepted the drop. */
    onDropOnFile?: (dragged: FileItem[], target: FileItem) => void;
  }
-@@ -308,6 +311,7 @@ export function FileManagerGrid({
+@@ -316,6 +319,7 @@ export function FileManagerGrid({
    scrollResetKey,
    mountMark,
    fileDropHint,
@@ -27,7 +26,7 @@ index 2778e04..05702e2 100644
    onDropOnFile,
  }: FileManagerGridProps) {
    const { t } = useTranslation();
-@@ -518,7 +522,9 @@ export function FileManagerGrid({
+@@ -565,7 +569,9 @@ export function FileManagerGrid({
        !dragState.files.some((f) => f.path === targetFile.path)
      ) {
        setDragState((prev) => ({ ...prev, target: targetFile }));
@@ -38,7 +37,7 @@ index 2778e04..05702e2 100644
      } else if (isLocalFilesDrag(e.dataTransfer)) {
        e.dataTransfer.dropEffect = "copy";
        const nextTarget =
-@@ -1759,6 +1765,13 @@ export function FileManagerGrid({
+@@ -1836,6 +1842,13 @@ export function FileManagerGrid({
                          })}
                        </span>
                      </>

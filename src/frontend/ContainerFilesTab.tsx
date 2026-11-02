@@ -8,6 +8,7 @@ import {
   usePluginUiPreferences,
   type TabProps,
 } from "@termix-ssh/plugin-sdk/frontend";
+import * as sdkUi from "@termix-ssh/plugin-sdk/ui";
 import {
   BackButton,
   BrowserSignInDialog,
@@ -40,13 +41,28 @@ import {
 } from "./types";
 import { ContainerList, ContainerTable } from "./containers/ContainerList";
 import { ContainerWorkspace } from "./workspace/ContainerWorkspace";
+import { clearSessionLayout } from "./workspace/layout";
 import { runtimeLabel } from "./runtimeLabel";
 import { planConnect, type BlockedKey } from "./connectOrigin";
 import { getApp } from "./app";
+import {
+  hostKeyDeclinedKey,
+  hostKeyInfoOf,
+  type HostKeyInfo,
+} from "./hostKeyPrompt";
+
+// Older Termix versions may not export the dialog. Without it the connect is
+// not told it can ask, and a new or changed key fails as it always did.
+const HostKeyDialog = (
+  sdkUi as {
+    HostKeyVerificationDialog?: typeof sdkUi.HostKeyVerificationDialog;
+  }
+).HostKeyVerificationDialog;
 
 interface PromptState {
-  kind: "totp" | "browser";
+  kind: "totp" | "browser" | "hostkey";
   sessionId: string;
+  hostKey?: HostKeyInfo;
   prompt?: string;
   isPassword?: boolean;
   url?: string;
@@ -120,6 +136,9 @@ function ContainerFilesInner({
   const [blocked, setBlocked] = React.useState<BlockedKey | null>(null);
   const [prompt, setPrompt] = React.useState<PromptState | null>(null);
   const [showAuthDialog, setShowAuthDialog] = React.useState(false);
+  // The person turned the host key down (or let it time out): retrying by
+  // itself would only ask again, so the retry waits for them.
+  const [hostKeyDeclined, setHostKeyDeclined] = React.useState(false);
   const [authReason, setAuthReason] = React.useState<
     "no_keyboard" | "auth_failed" | "timeout"
   >("no_keyboard");
@@ -145,6 +164,11 @@ function ContainerFilesInner({
   ) => {
     if (result.connectionLogs) setLogs(result.connectionLogs);
 
+    const hostKey = hostKeyInfoOf(result);
+    if (hostKey) {
+      setPrompt({ kind: "hostkey", sessionId: sid, hostKey });
+      return;
+    }
     if (result.requires_browser_sign_in) {
       setPrompt({
         kind: "browser",
@@ -192,9 +216,18 @@ function ContainerFilesInner({
       error instanceof ContainerApiError
         ? (error.data?.connectionLogs as ApiConnectionLog[] | undefined)
         : undefined;
+    const declined = hostKeyDeclinedKey(
+      error instanceof ContainerApiError ? error.code : undefined,
+    );
     if (logs?.length) {
       setLogs(logs);
-    } else {
+    }
+    if (declined) {
+      addLog({ type: "error", stage: "handshake", message: t(declined) });
+      setHostKeyDeclined(true);
+      return;
+    }
+    if (!logs?.length) {
       addLog({
         type: "error",
         stage: "connection",
@@ -233,7 +266,12 @@ function ContainerFilesInner({
       }
       setBlocked(null);
       const sid = plan.sessionId;
-      const result = await sessionApi.connect(sid, plan.hostId, credentials);
+      const result = await sessionApi.connect(
+        sid,
+        plan.hostId,
+        credentials,
+        !!HostKeyDialog,
+      );
       applyConnectResult(sid, result, !credentials);
     } catch (error) {
       reportFailure(error, t("containerFiles.connectionFailed"));
@@ -369,6 +407,24 @@ function ContainerFilesInner({
     }
   };
 
+  const handleHostKeyAnswer = async (action: "accept" | "reject") => {
+    if (!prompt || prompt.kind !== "hostkey") return;
+    const sid = prompt.sessionId;
+    setPrompt(null);
+    setIsConnecting(true);
+    try {
+      applyConnectResult(
+        sid,
+        await sessionApi.answerHostKey(sid, action),
+        false,
+      );
+    } catch (error) {
+      reportFailure(error, t("containerFiles.hostKeyRejected"));
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   const handlePromptCancel = () => {
     const sid = prompt?.sessionId;
     setPrompt(null);
@@ -395,6 +451,7 @@ function ContainerFilesInner({
 
   const handleRetry = () => {
     setBlocked(null);
+    setHostKeyDeclined(false);
     initializingRef.current = false;
     setSessionId(null);
     setConnected(false);
@@ -404,10 +461,16 @@ function ContainerFilesInner({
 
   const connectRetry = useConnectionRetry({
     connect: handleRetry,
-    enabled: !prompt && !showAuthDialog,
+    enabled: !prompt && !showAuthDialog && !hostKeyDeclined,
     autoStart: false,
   });
   retryRef.current = connectRetry;
+
+  // Shows the failure without scheduling a retry: this runs after the render in
+  // which the retry was switched off.
+  React.useEffect(() => {
+    if (hostKeyDeclined) retryRef.current?.markFailed();
+  }, [hostKeyDeclined]);
 
   const hostDetail = currentHost
     ? `${currentHost.username ? currentHost.username + "@" : ""}${currentHost.ip}:${currentHost.port}`
@@ -434,6 +497,14 @@ function ContainerFilesInner({
             window.open(prompt.url, "_blank", "noopener,noreferrer");
         }}
       />
+      {HostKeyDialog && prompt?.kind === "hostkey" && prompt.hostKey && (
+        <HostKeyDialog
+          isOpen
+          {...prompt.hostKey}
+          onAccept={() => void handleHostKeyAnswer("accept")}
+          onReject={() => void handleHostKeyAnswer("reject")}
+        />
+      )}
       {currentHost && (
         <SSHAuthDialog
           isOpen={showAuthDialog}
@@ -504,6 +575,9 @@ function ContainerFilesInner({
           leading={
             <BackButton
               onClick={() => {
+                // Back closes the workspace: its panes must not come back
+                // when another container is opened.
+                clearSessionLayout(sessionId);
                 setSelectedId(null);
                 void refreshContainers();
               }}

@@ -81,6 +81,16 @@ export interface ConnectResult {
   url?: string | null;
   code?: string;
   label?: string;
+  requires_host_key?: boolean;
+  scenario?: "new" | "changed";
+  ip?: string;
+  port?: number;
+  hostname?: string;
+  fingerprint?: string;
+  oldFingerprint?: string;
+  keyType?: string;
+  oldKeyType?: string;
+  algorithm?: string;
   connectionLogs?: ApiConnectionLog[];
 }
 

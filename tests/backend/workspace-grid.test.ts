@@ -6,6 +6,7 @@ import {
   emptyLayout,
   layoutReducer,
   parseLayout,
+  clearSessionLayout,
   readSessionLayout,
   writeSessionLayout,
   serializeLayout,
@@ -176,6 +177,12 @@ describe("session scoped layout", () => {
     writeSessionLayout("s1", serializeLayout(grid(3)));
     expect(parseLayout(readSessionLayout("s2")).panes).toHaveLength(0);
     expect(parseLayout(readSessionLayout("s1")).panes).toHaveLength(3);
+  });
+
+  it("clearing a session forgets its panes", () => {
+    writeSessionLayout("s3", serializeLayout(grid(2)));
+    clearSessionLayout("s3");
+    expect(readSessionLayout("s3")).toBeNull();
   });
 });
 

@@ -93,6 +93,12 @@
     }
   },
   "settings": {
+    "host": {
+      "enable": {
+        "label": "Container Files",
+        "description": "Показывать Container Files для этого хоста и позволить просматривать файлы его контейнеров."
+      }
+    },
     "user": {
       "transferConcurrency": {
         "label": "Параллельные передачи",
@@ -110,6 +116,8 @@
     "connectionFailed": "Не удалось подключиться",
     "totpFailed": "Проверка не пройдена",
     "browserSignInFailed": "Не удалось войти через браузер",
+    "hostKeyRejected": "Ключ хоста не принят, подключение не выполнено",
+    "hostKeyTimeout": "Ключ хоста не подтверждён вовремя, подключение не выполнено",
     "verificationCodePrompt": "Код подтверждения",
     "limit": {
       "stopped": "Контейнер остановлен.",

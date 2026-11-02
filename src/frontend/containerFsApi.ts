@@ -117,12 +117,27 @@ export interface Credentials {
 }
 
 export const sessionApi = {
-  connect: (sessionId: string, hostId: number, credentials?: Credentials) =>
+  // hostKeyPrompt: this client can show the host key dialog, so a new or
+  // changed key is asked about instead of failing the connect.
+  connect: (
+    sessionId: string,
+    hostId: number,
+    credentials?: Credentials,
+    hostKeyPrompt = false,
+  ) =>
     call<ConnectResult>("connect", () =>
       getApp().api.post(via(sessionId, "/ssh/connect"), {
         sessionId,
         hostId,
         ...credentials,
+        ...(hostKeyPrompt ? { hostKeyPrompt: true } : {}),
+      }),
+    ),
+  answerHostKey: (sessionId: string, action: "accept" | "reject") =>
+    call<ConnectResult>("answer the host key question", () =>
+      getApp().api.post(via(sessionId, "/ssh/connect-host-key"), {
+        sessionId,
+        action,
       }),
     ),
   answerTotp: (sessionId: string, totpCode: string) =>

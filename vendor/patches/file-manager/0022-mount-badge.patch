@@ -1,5 +1,4 @@
 diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
-index e674ab7..5e19a24 100644
 --- a/FileManagerGrid.tsx
 +++ b/FileManagerGrid.tsx
 @@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
@@ -10,7 +9,7 @@ index e674ab7..5e19a24 100644
  import {
    Folder,
    File,
-@@ -84,6 +85,15 @@ interface DragState {
+@@ -85,6 +86,15 @@ interface DragState {
    mousePosition?: { x: number; y: number };
  }
  
@@ -25,8 +24,8 @@ index e674ab7..5e19a24 100644
 +
  interface FileManagerGridProps {
    files: FileItem[];
-   selectedFiles: FileItem[];
-@@ -133,6 +143,8 @@ interface FileManagerGridProps {
+   /** Show a spinner instead of the empty-folder text while a listing is in flight. */
+@@ -138,6 +148,8 @@ interface FileManagerGridProps {
    onNavigateUp?: () => void;
    /** Scrolls back to the top whenever this value changes (e.g. the folder). */
    scrollResetKey?: string;
@@ -35,7 +34,7 @@ index e674ab7..5e19a24 100644
  }
  
  const getFileTypeColor = (file: FileItem): string => {
-@@ -151,14 +163,22 @@ const getFileIcon = (
+@@ -156,14 +168,22 @@ const getFileIcon = (
    file: FileItem,
    viewMode: "grid" | "list" = "grid",
    compact = false,
@@ -62,7 +61,7 @@ index e674ab7..5e19a24 100644
      </span>
    );
  };
-@@ -282,6 +302,7 @@ export function FileManagerGrid({
+@@ -290,6 +310,7 @@ export function FileManagerGrid({
    parentPath,
    onNavigateUp,
    scrollResetKey,
@@ -70,7 +69,7 @@ index e674ab7..5e19a24 100644
  }: FileManagerGridProps) {
    const { t } = useTranslation();
    const gridRef = useRef<HTMLDivElement>(null);
-@@ -1324,7 +1345,7 @@ export function FileManagerGrid({
+@@ -1394,7 +1415,7 @@ export function FileManagerGrid({
                                    compact ? "mb-1" : "mb-2",
                                  )}
                                >
@@ -79,7 +78,7 @@ index e674ab7..5e19a24 100644
                                </div>
                                <div className="w-full flex flex-col items-center pointer-events-none">
                                  {editingFile?.path === file.path ? (
-@@ -1364,6 +1385,14 @@ export function FileManagerGrid({
+@@ -1434,6 +1455,14 @@ export function FileManagerGrid({
                                      → {file.linkTarget}
                                    </p>
                                  )}
@@ -94,7 +93,7 @@ index e674ab7..5e19a24 100644
                                </div>
                              </div>
                            );
-@@ -1537,7 +1566,7 @@ export function FileManagerGrid({
+@@ -1606,7 +1635,7 @@ export function FileManagerGrid({
                            )}
                          >
                            <div className="shrink-0">
@@ -103,7 +102,7 @@ index e674ab7..5e19a24 100644
                            </div>
                            {isEditing ? (
                              <input
-@@ -1565,6 +1594,14 @@ export function FileManagerGrid({
+@@ -1634,6 +1663,14 @@ export function FileManagerGrid({
                                    → {file.linkTarget}
                                  </span>
                                )}

@@ -131,6 +131,7 @@
     "selectHostToStart": "Select a host to start file management",
     "sshRequiredForFileManager": "File manager requires SSH. This host does not have SSH enabled.",
     "failedToConnect": "Failed to connect to SSH",
+    "hostKeyChanged": "This host's SSH key has changed. Open a terminal to this host to check and accept the new key, then retry here.",
     "failedToLoadDirectory": "Failed to load directory",
     "noSSHConnection": "No SSH connection available",
     "copy": "Copy",
@@ -590,6 +591,12 @@
     }
   },
   "settings": {
+    "host": {
+      "enable": {
+        "label": "Container Files",
+        "description": "Show Container Files for this host and let it browse the files of its containers."
+      }
+    },
     "user": {
       "transferConcurrency": {
         "label": "Concurrent transfers",
@@ -607,6 +614,8 @@
     "connectionFailed": "Connection failed",
     "totpFailed": "Verification failed",
     "browserSignInFailed": "Browser sign-in failed",
+    "hostKeyRejected": "The host key was not accepted, so the connection was not made",
+    "hostKeyTimeout": "The host key was not confirmed in time, so the connection was not made",
     "verificationCodePrompt": "Verification code",
     "limit": {
       "stopped": "The container is stopped.",

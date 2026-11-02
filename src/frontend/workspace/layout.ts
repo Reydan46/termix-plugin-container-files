@@ -1403,6 +1403,11 @@ export function writeSessionLayout(sessionId: string, value: string): void {
   sessionLayouts.set(sessionId, value);
 }
 
+/** Forgets the arrangement, so the next container opened starts alone. */
+export function clearSessionLayout(sessionId: string): void {
+  sessionLayouts.delete(sessionId);
+}
+
 export function paneStateKey(
   hostId: number | string,
   containerId: string,

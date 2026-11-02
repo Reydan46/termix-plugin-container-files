@@ -6,19 +6,22 @@ A [Termix](https://github.com/Termix-SSH/Termix) plugin that lets you browse and
 
 ## What you can do
 
-- Browse a container's filesystem in list or grid view, with a folder tree, search and multi-select.
-- Manage files: create, rename, copy, move, delete, permissions, symlinks.
-- Edit text files and preview images, audio, video, PDF and Markdown.
+- Pick a host, see its containers, open one and work with its filesystem.
+- Browse in list or grid view, with a folder tree, search, sorting and multi-select.
+- Create, rename, copy, cut, paste, delete, change permissions and owner, make symlinks.
+- Edit text files, preview images, audio, video, PDF and Markdown.
 - Upload and download files and folders, with progress and cancel.
-- Work with archives (zip, 7z, tar, rar and more): browse, extract, add files and delete entries without unpacking.
-- See the container's mounts, with read-write and read-only ones marked.
-- Open several containers side by side and drag or copy files between them, or from your own computer (Termix Desktop, Explorer and Finder).
+- Compress and extract archives, browse inside an archive without extracting, add files to an existing archive and delete entries from inside it.
+- See a container's mounts (bind, volume, tmpfs) marked RW or RO on their folders.
+- Copy and paste files between panes, and paste files copied in Windows Explorer or Finder with Ctrl/Cmd+V.
+- Open several containers side by side in tiled panes and drag files between them.
+- Termix Desktop: also open a pane with your own computer and drag files between it and a container.
 - Open a terminal in the container.
 - English and Russian.
 
 ## Install
 
-Open Plugins in Termix, turn on the community registry (admins), find Container Files and install it. Then open the Container Files tab on a host with SSH enabled.
+Open Plugins in Termix, turn on the community registry (admins), find Container Files and install it. Then turn on Container Files in the host's settings (SSH section) and open its tab on that host.
 
 See the [docs](docs/index.md) for the details, including what the plugin is allowed to do and why.
 
@@ -26,7 +29,7 @@ See the [docs](docs/index.md) for the details, including what the plugin is allo
 
 - The host user must be able to run `docker` or `podman`.
 - Stopped and minimal (no shell) containers only allow listing, reading, uploading and downloading; actions that need a shell are disabled with a reason.
-- Archives need their tool in the container (unzip or zip, 7z, tar, gzip, bzip2, xz, zstd, unrar). Rar and single compressed files are read-only, and changing tar archives needs GNU tar. When a tool is missing the reason is shown.
+- Archives: zip (and jar, war, apk, whl, epub), 7z, tar, tar.gz, tar.bz2, tar.xz and tar.zst can be browsed, extracted, have files added and entries deleted; rar can only be browsed and extracted; a single .gz, .bz2, .xz or .zst file can only be extracted. Each needs its tool in the container (unzip or zip, 7z, tar, gzip, bzip2, xz, zstd, unrar); adding and deleting in tar archives needs GNU tar. When a tool is missing the reason is shown.
 - Transfers cannot be resumed.
 
 ## Development

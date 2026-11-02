@@ -201,9 +201,12 @@ export function registerRoutes(
    *               userProvidedPassword: { type: string }
    *               userProvidedSshKey: { type: string }
    *               userProvidedKeyPassword: { type: string }
+   *               hostKeyPrompt:
+   *                 type: boolean
+   *                 description: "The client can show the host key dialog (requires_host_key); without it a new or changed key fails the connect"
    *     responses:
    *       200:
-   *         description: "Connected, or the next login step, with connectionLogs"
+   *         description: "Connected, or the next login step (a code, a browser sign-in, a host key to confirm), with connectionLogs"
    *       400:
    *         description: "sessionId or hostId missing"
    *       404:
@@ -220,6 +223,7 @@ export function registerRoutes(
       userProvidedPassword,
       userProvidedSshKey,
       userProvidedKeyPassword,
+      hostKeyPrompt,
     } = (req.body ?? {}) as Record<string, unknown>;
     const logs: ConnectionLogLine[] = [];
 
@@ -275,6 +279,7 @@ export function registerRoutes(
         userId,
         host: target,
         logs,
+        hostKeyPrompt: hostKeyPrompt === true,
       });
       return res.status(step.status).json(step.body);
     } catch (error) {
@@ -374,6 +379,54 @@ export function registerRoutes(
       userId,
       "browser",
       "",
+    );
+    return res.status(step.status).json(step.body);
+  });
+
+  /**
+   * @openapi
+   * /plugin-api/container-files/ssh/connect-host-key:
+   *   post:
+   *     summary: "Accept or reject the host key a pending connection asked about"
+   *     description: "Answers a requires_host_key step. Accepting stores the key in Termix so later connects are silent; rejecting or not answering fails the connect (HOST_KEY_REJECTED, HOST_KEY_TIMEOUT)."
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [sessionId, action]
+   *             properties:
+   *               sessionId: { type: string }
+   *               action: { type: string, enum: [accept, reject] }
+   *     responses:
+   *       200:
+   *         description: "Result of the connection step"
+   *       400:
+   *         description: "sessionId or action missing or invalid, nothing waiting for an answer, or the key was rejected"
+   *       404:
+   *         description: "The connection expired"
+   *       408:
+   *         description: "The key was not confirmed in time"
+   */
+  router.post("/ssh/connect-host-key", async (req, res) => {
+    const userId = userOf(res);
+    if (!userId) return;
+    const { sessionId, action } = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof sessionId !== "string" || !sessionId) {
+      return res.status(400).json({ error: "Session ID is required" });
+    }
+    if (action !== "accept" && action !== "reject") {
+      return res.status(400).json({ error: "Action must be accept or reject" });
+    }
+    const step = await answerConnect(
+      sessions,
+      sessionId,
+      userId,
+      "hostkey",
+      action,
     );
     return res.status(step.status).json(step.body);
   });

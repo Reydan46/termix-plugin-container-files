@@ -6,6 +6,7 @@ An Express router served by the Termix plugin backend.
 
 - `index.ts`, `routes.ts`, `routes-transfer-extra.ts`: HTTP routes (SSH session, containers, `fs/*` operations, transfers, container-to-container copy, desktop local transfers).
 - `sessions.ts`, `connect.ts`: per-user SSH sessions on top of host credentials.
+- `host-key.ts`: asks about a new or changed host key. `ctx.ssh.connect` cannot ask, so after a "verification failed" refusal (and only for a client that sent `hostKeyPrompt`) `connect.ts` runs a probe: `ctx.ssh.prepare` with a socket of ours lets core's verifier ask, the question goes out as a `requires_host_key` step and `POST /ssh/connect-host-key` carries the answer back over HTTP, so it works through the server proxy too. The probe always refuses the handshake and never logs in; core stores the key only on accept, then the real connect runs again. A reject or a timeout ends the connect with `HOST_KEY_REJECTED` or `HOST_KEY_TIMEOUT`; an older server or core keeps the plain error.
 - `containers.ts`, `runtime.ts`, `capabilities.ts`: engine detection (docker/podman) and a per-container capability probe (`exec`, `findPrintf`, `statC`, missing tools, machine-readable `reason`).
 - `exec.ts`: `openChannel`, `openChannelAbortable` (a cancel during channel open destroys the channel once it opens), `runCommand`, `channelDone`.
 - `mounts.ts`: `GET .../mounts`, the container mounts from `inspect --format {{json .Mounts}}` (docker and podman shapes, cached briefly in the session and dropped with the container state). The UI badges mount destinations (patch 0022) and lists them in the Mounts window.
@@ -41,7 +42,7 @@ Single-file uploads and container copies write `.cf-part-<id8>-<name>` (`partNam
 
 ## Frontend (`src/frontend`)
 
-- `index.tsx`, `ContainerFilesTab.tsx`: tab, host and container selection, connect flow.
+- `index.tsx`, `ContainerFilesTab.tsx`: tab, host and container selection, connect flow (including the host key dialog; a declined key stops the automatic retry).
 - `ContainerFileManager.tsx`: the orchestrator for one container (see [orchestrator-parity.md](orchestrator-parity.md)).
 - `containerFsApi.ts`: typed client for the backend; `webTransfer.ts`: browser upload and streaming helpers.
 - `popup/`: shared draggable popup windows, confirm, placement. `keyGuard.ts` keeps the file panes out of dialogs: the vendored grid (patch 0027), the local pane and the Escape-clears-clipboard listener listen on `document`, so a key from inside a `.window-container`, dialog or menu, or any key while a confirm card is open, is ignored there (`dialogOwnsKey`). The confirm card (`useConfirm`, rules in `confirmKeys.ts`) is a `window` capture listener that stops every key while it is the topmost card (Enter confirms or cancels by focus, held Enter and other keys are swallowed) and focuses its default button once it is placed (an `autoFocus` does not work while the card is `visibility:hidden`), then returns the focus to where it was.

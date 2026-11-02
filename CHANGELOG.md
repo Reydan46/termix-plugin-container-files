@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.3
+
+### Added
+
+- Container Files is shown only on hosts where you turn it on in the host settings (SSH section), in the same places as the Docker plugin's button.
+- The first connection to a host asks you to confirm its SSH host key (and a changed key asks again) with the usual fingerprint dialog, instead of failing at once. Declining is not retried. Works for direct and server connections.
+
+### Changed
+
+- The file manager follows Plugin-File-Manager 1.1.3: fixed row height in the list, a loading spinner for an empty folder and selection highlight in the editor.
+
+### Fixed
+
+- Going back from a container closes its panes, so opening another container no longer brings the old ones back.
+
 ## 1.0.2
 
 ### Added

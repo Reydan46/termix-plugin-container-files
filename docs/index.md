@@ -5,7 +5,7 @@ Container Files is a file manager for Docker and Podman containers. It works ove
 ## Turn it on
 
 1. Install Container Files from the Plugins tab.
-2. Open the Container Files tab on a host that has SSH enabled.
+2. Turn on Container Files in the settings of a host that has SSH enabled (SSH section), then open its Container Files tab.
 3. Choose a container. It opens at the root folder.
 
 Using the tab needs the Use Container Files permission, which admins and users get by default.

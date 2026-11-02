@@ -21,6 +21,12 @@ import type {
 import type { Sessions, ContainerSession } from "./sessions.js";
 import { detectRuntime, detectRuntimeVersion } from "./runtime.js";
 import {
+  hostKeyWaitMs,
+  isHostKeyRefusal,
+  negotiateHostKey,
+  type HostKeyPrompt,
+} from "./host-key.js";
+import {
   connectionLog,
   getErrorMessage,
   type ConnectionLogLine,
@@ -50,7 +56,7 @@ export class PendingConnect {
 
   expiresAt = Date.now() + TOTP_WAIT_MS;
   /** What the open prompt expects, or null when nothing is being asked. */
-  awaiting: "totp" | "browser" | null = null;
+  awaiting: "totp" | "browser" | "hostkey" | null = null;
   abandoned = false;
   private waiter: ((step: ConnectStep) => void) | null = null;
   private queued: ConnectStep | null = null;
@@ -90,7 +96,10 @@ export class PendingConnect {
     });
   }
 
-  ask(kind: "totp" | "browser", waitMs: number): Promise<string | null> {
+  ask(
+    kind: "totp" | "browser" | "hostkey",
+    waitMs: number,
+  ): Promise<string | null> {
     this.awaiting = kind;
     this.expiresAt = Date.now() + waitMs;
     return new Promise((resolve) => {
@@ -161,6 +170,21 @@ export interface StartConnectInput {
   userId: string;
   host: PluginSshHost;
   logs: ConnectionLogLine[];
+  /**
+   * The client can show the host key dialog. Without it a new or changed key
+   * fails as before, since an older client would read the step as a success.
+   */
+  hostKeyPrompt?: boolean;
+}
+
+/** A person turned the host key down, or never answered. */
+class HostKeyDeclined extends Error {
+  constructor(
+    readonly code: "HOST_KEY_REJECTED" | "HOST_KEY_TIMEOUT",
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 /**
@@ -245,143 +269,218 @@ export async function startConnect(
   );
   logs.push(connectionLog("info", "handshake", "Initiating SSH handshake"));
 
-  ctx.ssh
-    .connect<Client>(host, {
+  const askHostKey = (prompt: HostKeyPrompt) => {
+    if (pending.abandoned) return Promise.resolve(null);
+    logs.push(
+      connectionLog(
+        "warning",
+        "handshake",
+        prompt.scenario === "changed"
+          ? "Host key has changed, waiting for confirmation"
+          : "Host key is new, waiting for confirmation",
+      ),
+    );
+    const answer = pending.ask("hostkey", hostKeyWaitMs(prompt.scenario));
+    pending.emit({
+      status: 200,
+      body: {
+        requires_host_key: true,
+        sessionId,
+        ...prompt,
+        connectionLogs: logs,
+      },
+    });
+    return answer.then((value) =>
+      value === null ? null : value === "accept" ? "accept" : "reject",
+    );
+  };
+
+  const connectOnce = () =>
+    ctx.ssh.connect<Client>(host, {
       purpose: "container-files",
       profile: "session",
       timeoutMs: CONNECT_TIMEOUT_MS,
       prompt: { ask },
-    })
-    .then(
-      async (connection) => {
-        sessions.clearPending(sessionId);
-        ctx.hosts.status.reportLogin(hostId, { ok: true });
-        if (pending.abandoned) {
-          connection.dispose();
-          return;
-        }
+    });
 
-        const runtime = await detectRuntime(connection.client).catch(
-          () => null,
-        );
-        if (!runtime) {
-          connection.dispose();
-          logs.push(
-            connectionLog(
-              "error",
-              "runtime",
-              "Neither docker nor podman was found on the host",
-            ),
+  // A new or changed key is refused by the plain connect, which cannot ask.
+  // Ask through a probe, then connect again with the key stored.
+  const connectAskingHostKey = async () => {
+    try {
+      return await connectOnce();
+    } catch (error) {
+      if (!input.hostKeyPrompt || pending.abandoned || !isHostKeyRefusal(error))
+        throw error;
+      const result = await negotiateHostKey(ctx, {
+        host,
+        prompt: { ask },
+        isAbandoned: () => pending.abandoned,
+        asker: {
+          ask: askHostKey,
+          dismiss: () => pending.respond(null),
+        },
+      });
+      switch (result) {
+        case "accepted":
+          logs.push(connectionLog("info", "handshake", "Host key accepted"));
+          return connectOnce();
+        case "rejected":
+          throw new HostKeyDeclined(
+            "HOST_KEY_REJECTED",
+            "The host key was not accepted",
           );
-          pending.emit({
-            status: 400,
-            body: {
-              error: "Neither docker nor podman was found on the host",
-              code: "NO_RUNTIME",
-              connectionLogs: logs,
-            },
-          });
-          return;
-        }
+        case "timeout":
+          throw new HostKeyDeclined(
+            "HOST_KEY_TIMEOUT",
+            "The host key was not confirmed in time",
+          );
+        default:
+          throw error;
+      }
+    }
+  };
 
-        const runtimeVersion = await detectRuntimeVersion(
-          connection.client,
-          runtime,
-        ).catch(() => null);
+  connectAskingHostKey().then(
+    async (connection) => {
+      sessions.clearPending(sessionId);
+      ctx.hosts.status.reportLogin(hostId, { ok: true });
+      if (pending.abandoned) {
+        connection.dispose();
+        return;
+      }
 
-        const session: ContainerSession = {
-          id: sessionId,
-          client: connection.client,
-          dispose: connection.dispose,
-          hostId,
-          userId,
-          runtime,
-          runtimeVersion,
-          lastActive: Date.now(),
-          activeOperations: 0,
-          states: new Map(),
-          mounts: new Map(),
-          capabilities: new Map(),
-        };
-        sessions.add(session);
-
-        void ctx.audit.record({
-          action: "container_files_connect",
-          resourceType: "host",
-          resourceId: String(hostId),
-          resourceName: (host.name as string) || undefined,
-          success: true,
-        });
-
+      const runtime = await detectRuntime(connection.client).catch(() => null);
+      if (!runtime) {
+        connection.dispose();
         logs.push(
           connectionLog(
-            "success",
-            "connected",
-            `Connected (${runtime}) over SSH`,
+            "error",
+            "runtime",
+            "Neither docker nor podman was found on the host",
           ),
         );
         pending.emit({
-          status: 200,
+          status: 400,
           body: {
-            success: true,
-            status: "success",
-            runtime,
-            runtimeVersion,
+            error: "Neither docker nor podman was found on the host",
+            code: "NO_RUNTIME",
             connectionLogs: logs,
           },
         });
-      },
-      (error: unknown) => {
-        sessions.clearPending(sessionId);
-        const message = getErrorMessage(error, "SSH connection failed");
-        if (pending.abandoned) return;
+        return;
+      }
 
-        const outcome = (error as { outcome?: Record<string, unknown> })
-          .outcome;
-        if (outcome?.status === "interaction-required") {
-          logs.push(connectionLog("error", "auth", message));
-          pending.emit({
-            status: 401,
-            body: {
-              error: message,
-              requiresAuthInteraction: outcome.interaction,
-              ...(typeof outcome.flag === "string"
-                ? { [outcome.flag]: true }
-                : {}),
-              connectionLogs: logs,
-            },
-          });
-          return;
-        }
-        if (outcome?.status === "error") {
-          logs.push(connectionLog("error", "auth", message));
-          pending.emit({
-            status: 400,
-            body: { error: message, connectionLogs: logs },
-          });
-          return;
-        }
+      const runtimeVersion = await detectRuntimeVersion(
+        connection.client,
+        runtime,
+      ).catch(() => null);
 
-        const { authFailed } = classifyConnectError(message, logs);
-        log.error("SSH connection failed", { hostId, userId, error: message });
+      const session: ContainerSession = {
+        id: sessionId,
+        client: connection.client,
+        dispose: connection.dispose,
+        hostId,
+        userId,
+        runtime,
+        runtimeVersion,
+        lastActive: Date.now(),
+        activeOperations: 0,
+        states: new Map(),
+        mounts: new Map(),
+        capabilities: new Map(),
+      };
+      sessions.add(session);
 
-        if (credentialless && authFailed) {
-          pending.emit({
-            status: 200,
-            body: {
-              status: "auth_required",
-              reason: "no_keyboard",
-              connectionLogs: logs,
-            },
-          });
-          return;
-        }
+      void ctx.audit.record({
+        action: "container_files_connect",
+        resourceType: "host",
+        resourceId: String(hostId),
+        resourceName: (host.name as string) || undefined,
+        success: true,
+      });
+
+      logs.push(
+        connectionLog(
+          "success",
+          "connected",
+          `Connected (${runtime}) over SSH`,
+        ),
+      );
+      pending.emit({
+        status: 200,
+        body: {
+          success: true,
+          status: "success",
+          runtime,
+          runtimeVersion,
+          connectionLogs: logs,
+        },
+      });
+    },
+    (error: unknown) => {
+      sessions.clearPending(sessionId);
+      const message = getErrorMessage(error, "SSH connection failed");
+      if (pending.abandoned) return;
+
+      if (error instanceof HostKeyDeclined) {
+        log.warn("Host key not accepted", { hostId, userId, code: error.code });
+        // The client words this one itself, from the code.
         pending.emit({
-          status: 500,
-          body: { success: false, message, connectionLogs: logs },
+          status: error.code === "HOST_KEY_TIMEOUT" ? 408 : 400,
+          body: {
+            error: error.message,
+            code: error.code,
+            connectionLogs: logs,
+          },
         });
-      },
-    );
+        return;
+      }
+
+      const outcome = (error as { outcome?: Record<string, unknown> }).outcome;
+      if (outcome?.status === "interaction-required") {
+        logs.push(connectionLog("error", "auth", message));
+        pending.emit({
+          status: 401,
+          body: {
+            error: message,
+            requiresAuthInteraction: outcome.interaction,
+            ...(typeof outcome.flag === "string"
+              ? { [outcome.flag]: true }
+              : {}),
+            connectionLogs: logs,
+          },
+        });
+        return;
+      }
+      if (outcome?.status === "error") {
+        logs.push(connectionLog("error", "auth", message));
+        pending.emit({
+          status: 400,
+          body: { error: message, connectionLogs: logs },
+        });
+        return;
+      }
+
+      const { authFailed } = classifyConnectError(message, logs);
+      log.error("SSH connection failed", { hostId, userId, error: message });
+
+      if (credentialless && authFailed) {
+        pending.emit({
+          status: 200,
+          body: {
+            status: "auth_required",
+            reason: "no_keyboard",
+            connectionLogs: logs,
+          },
+        });
+        return;
+      }
+      pending.emit({
+        status: 500,
+        body: { success: false, message, connectionLogs: logs },
+      });
+    },
+  );
 
   return pending.next();
 }
@@ -391,7 +490,7 @@ export async function answerConnect(
   sessions: Sessions,
   sessionId: string,
   userId: string,
-  kind: "totp" | "browser",
+  kind: "totp" | "browser" | "hostkey",
   value: string,
 ): Promise<ConnectStep> {
   const pending = sessions.getPending(sessionId);
@@ -408,7 +507,9 @@ export async function answerConnect(
         error:
           kind === "browser"
             ? "Session is not waiting for a browser sign-in"
-            : "Session is not waiting for a code",
+            : kind === "hostkey"
+              ? "Session is not waiting for a host key decision"
+              : "Session is not waiting for a code",
       },
     };
   }
