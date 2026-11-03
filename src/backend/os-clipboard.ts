@@ -357,7 +357,7 @@ export async function readFileClipboard(
 
 /** The temp copy of the last Copy: one directory at a time. */
 let current: string | null = null;
-let exitHooked = false;
+let exitHandler: (() => void) | null = null;
 
 function ours(dir: string): boolean {
   return (
@@ -378,16 +378,16 @@ export async function prepareTempDir(): Promise<string> {
   await removeTempDir();
   const dir = await mkdtemp(join(tmpdir(), TEMP_PREFIX));
   current = dir;
-  if (!exitHooked) {
-    exitHooked = true;
-    process.once("exit", () => {
+  if (!exitHandler) {
+    exitHandler = () => {
       if (current && ours(current))
         try {
           rmSync(current, { recursive: true, force: true });
         } catch {
           /* best effort */
         }
-    });
+    };
+    process.once("exit", exitHandler);
   }
   return dir;
 }
@@ -415,4 +415,11 @@ export async function checkTempCopy(
   }
   if ((await readdir(current)).length === 0) throw new Error("Nothing to copy");
   return current;
+}
+
+/** Plugin disable: removes the temp copy and the process exit handler. */
+export async function disposeTempDir(): Promise<void> {
+  if (exitHandler) process.removeListener("exit", exitHandler);
+  exitHandler = null;
+  await removeTempDir();
 }

@@ -12,6 +12,7 @@ import {
   samePaths,
   knownBytes,
   MAX_OS_COPY_BYTES,
+  runOnPageHide,
   supportsOsFileClipboard,
 } from "./osClipboard";
 import { formatBytes } from "./UploadProgressToast";
@@ -44,11 +45,8 @@ export function supersedeOsCopy(): void {
 /** The paths this plugin last put on the OS clipboard from the local pane. */
 let lastLocalCopy: string[] | null = null;
 
-let unloadHooked = false;
 function cleanOnClose() {
-  if (unloadHooked) return;
-  unloadHooked = true;
-  window.addEventListener("pagehide", () => {
+  runOnPageHide(() => {
     // The page is unloading: there is nobody left to show an error to, and the
     // temp directory is cleaned on the next start anyway.
     void clipboardPost("clear", {}).catch(() => undefined);

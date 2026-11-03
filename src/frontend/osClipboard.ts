@@ -148,7 +148,6 @@ export function samePaths(a: readonly string[], b: readonly string[]): boolean {
 
 let internalAt = 0;
 let osAt = 0;
-let tracking = false;
 
 /** A Copy or Cut set the internal clipboard (any pane, any way: keys, menu, toolbar). */
 export function markInternalClipboard(now = Date.now()): void {
@@ -175,15 +174,34 @@ export function clipboardTimes(): { internalAt: number; osAt: number } {
   return { internalAt, osAt };
 }
 
-/** Starts noting when the window regains focus (idempotent). */
-export function trackWindowFocus(): void {
-  if (tracking || typeof window === "undefined") return;
-  tracking = true;
+/** Starts noting when the window regains focus; returns the stop. */
+export function trackWindowFocus(): () => void {
+  if (typeof window === "undefined") return () => {};
   const mark = () => markOsClipboard();
-  window.addEventListener("focus", mark);
-  document.addEventListener("visibilitychange", () => {
+  const onVisible = () => {
     if (document.visibilityState === "visible") mark();
-  });
+  };
+  window.addEventListener("focus", mark);
+  document.addEventListener("visibilitychange", onVisible);
+  return () => {
+    window.removeEventListener("focus", mark);
+    document.removeEventListener("visibilitychange", onVisible);
+  };
+}
+
+let stopPageHide: (() => void) | null = null;
+
+/** Runs `handler` when the page unloads (hooked once until stopped). */
+export function runOnPageHide(handler: () => void): void {
+  if (stopPageHide || typeof window === "undefined") return;
+  window.addEventListener("pagehide", handler);
+  stopPageHide = () => window.removeEventListener("pagehide", handler);
+}
+
+/** Removes the page unload hook, if any. */
+export function stopPageHideCleanup(): void {
+  stopPageHide?.();
+  stopPageHide = null;
 }
 
 let folderHintShown = false;

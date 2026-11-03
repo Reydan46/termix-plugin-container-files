@@ -2,9 +2,14 @@ import { FolderArchive } from "lucide-react";
 import type { TermixApp } from "@termix-ssh/plugin-sdk/frontend";
 import { setApp } from "./app";
 import { ContainerFilesTab } from "./ContainerFilesTab";
+import { trackActivePane } from "./paneFocus";
+import { trackPointer } from "./popup/pointerTracker";
+import { stopPageHideCleanup } from "./osClipboard";
 
 export function activate(app: TermixApp): () => void {
   setApp(app);
+  const stopPaneTracking = trackActivePane();
+  const stopPointerTracking = trackPointer();
   // Host actions filter synchronously, so the permission is read once here.
   let canUse = true;
   void app.hasPermission("use").then((allowed) => {
@@ -34,6 +39,9 @@ export function activate(app: TermixApp): () => void {
   return () => {
     dispose();
     disposeAction?.();
+    stopPaneTracking();
+    stopPointerTracking();
+    stopPageHideCleanup();
     setApp(null);
   };
 }

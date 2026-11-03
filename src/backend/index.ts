@@ -4,6 +4,7 @@ import { createLogger } from "./helpers.js";
 import { createSessions } from "./sessions.js";
 import { registerConsole } from "./console.js";
 import { registerRoutes } from "./routes.js";
+import { disposeTempDir } from "./os-clipboard.js";
 import { TransferRegistry } from "./transfers.js";
 
 export async function activate(ctx: PluginContext) {
@@ -13,6 +14,8 @@ export async function activate(ctx: PluginContext) {
 
   const transfers = new TransferRegistry();
   ctx.disposables.add(() => transfers.abortAll());
+
+  ctx.disposables.add(() => disposeTempDir());
 
   const router = ctx.http.router<Router>();
   registerRoutes(router, { ctx, sessions, log, transfers });

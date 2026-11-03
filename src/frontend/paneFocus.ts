@@ -51,7 +51,14 @@ function track(event: Event) {
   );
 }
 
-if (typeof document !== "undefined") {
+/** Starts following which pane was pressed or focused; returns the stop. */
+export function trackActivePane(): () => void {
+  if (typeof document === "undefined") return () => {};
   document.addEventListener("pointerdown", track, true);
   document.addEventListener("focusin", track, true);
+  return () => {
+    document.removeEventListener("pointerdown", track, true);
+    document.removeEventListener("focusin", track, true);
+    active = null;
+  };
 }

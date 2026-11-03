@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.5
+
+### Fixed
+
+- Document and window listeners (pane focus, pointer tracking, window focus, page unload) are now attached when the plugin is enabled and removed when it is disabled, instead of at module load.
+- The temporary copy made by Copy is removed, and its exit handler detached, when the plugin is disabled.
+
 ## 1.0.4
 
 ### Changed

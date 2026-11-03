@@ -1364,12 +1364,13 @@ function Inner({
     },
   };
   React.useEffect(() => {
-    trackWindowFocus();
+    const stopFocusTracking = trackWindowFocus();
     const onKey = (event: KeyboardEvent) => osPasteRef.current.keydown(event);
     const onPaste = (event: ClipboardEvent) => osPasteRef.current.paste(event);
     document.addEventListener("keydown", onKey, true);
     document.addEventListener("paste", onPaste);
     return () => {
+      stopFocusTracking();
       document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("paste", onPaste);
     };
