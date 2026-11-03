@@ -203,7 +203,7 @@ export async function queryWindowsFolders(
         spawned.write(`${powershellCommandLine(id)}\r`);
       });
     })();
-    run.catch(() => undefined);
+    run.catch(() => undefined); // the cache is refilled on the next request
     return await Promise.race([result, run]);
   } catch {
     return null;

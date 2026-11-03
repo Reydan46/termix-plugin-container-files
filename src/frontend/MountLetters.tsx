@@ -1,4 +1,3 @@
-import React from "react";
 import { MOUNT_LETTERS as G } from "./mountLookup";
 
 /**

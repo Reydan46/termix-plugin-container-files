@@ -49,6 +49,8 @@ function cleanOnClose() {
   if (unloadHooked) return;
   unloadHooked = true;
   window.addEventListener("pagehide", () => {
+    // The page is unloading: there is nobody left to show an error to, and the
+    // temp directory is cleaned on the next start anyway.
     void clipboardPost("clear", {}).catch(() => undefined);
   });
 }
@@ -175,8 +177,9 @@ export async function copyToOsClipboard({
       );
     }
     // A newer Copy owns the temp directory now: leave it alone.
+    // Best effort cleanup: a failure only leaves temp files that the next Copy replaces.
     if (running === controller)
-      void clipboardPost("clear", {}).catch(() => undefined);
+      void clipboardPost("clear", {}).catch(() => undefined); // best effort: a stale clipboard entry is replaced by the next copy
   } finally {
     closed = true;
     clearInterval(poll);

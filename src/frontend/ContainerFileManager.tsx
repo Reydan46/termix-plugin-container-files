@@ -925,7 +925,7 @@ function Inner({
             try {
               size = (await fsApi.stat(key, path)).size;
             } catch {
-              /* unknown */
+              // The size stays unknown; the dialog then shows a placeholder instead of it.
             }
           }
           await offerDownload(file, reason, size);

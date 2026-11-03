@@ -105,7 +105,7 @@ export async function writeTextFile(
     );
     if (result.code !== 0) throw errorFromResult(result);
   } else {
-    const existing = await statPath(t, path, { signal }).catch(() => null);
+    const existing = await statPath(t, path, { signal }).catch(() => null); // no stat means the file does not exist yet
     if (
       existing &&
       expectedMtime !== undefined &&
@@ -120,6 +120,6 @@ export async function writeTextFile(
       signal,
     );
   }
-  const after = await statPath(t, path, { signal }).catch(() => null);
+  const after = await statPath(t, path, { signal }).catch(() => null); // the written size is only used for the result when it can be read
   return { size: data.length, mtime: after?.mtime ?? 0 };
 }

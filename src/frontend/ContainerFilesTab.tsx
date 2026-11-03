@@ -46,7 +46,7 @@ import { runtimeLabel } from "./runtimeLabel";
 import { planConnect, type BlockedKey } from "./connectOrigin";
 import { getApp } from "./app";
 import {
-  hostKeyDeclinedKey,
+  settledFailureKey,
   hostKeyInfoOf,
   type HostKeyInfo,
 } from "./hostKeyPrompt";
@@ -136,9 +136,10 @@ function ContainerFilesInner({
   const [blocked, setBlocked] = React.useState<BlockedKey | null>(null);
   const [prompt, setPrompt] = React.useState<PromptState | null>(null);
   const [showAuthDialog, setShowAuthDialog] = React.useState(false);
-  // The person turned the host key down (or let it time out): retrying by
-  // itself would only ask again, so the retry waits for them.
-  const [hostKeyDeclined, setHostKeyDeclined] = React.useState(false);
+  // The connect ended on an answer a retry cannot change (the host key was
+  // turned down, or the host has no docker or podman): retrying by itself would
+  // only meet it again, so the retry waits for the person.
+  const [retryHeld, setRetryHeld] = React.useState(false);
   const [authReason, setAuthReason] = React.useState<
     "no_keyboard" | "auth_failed" | "timeout"
   >("no_keyboard");
@@ -216,15 +217,20 @@ function ContainerFilesInner({
       error instanceof ContainerApiError
         ? (error.data?.connectionLogs as ApiConnectionLog[] | undefined)
         : undefined;
-    const declined = hostKeyDeclinedKey(
+    const declined = settledFailureKey(
       error instanceof ContainerApiError ? error.code : undefined,
     );
     if (logs?.length) {
-      setLogs(logs);
+      // The backend's own wording of a failure we translate is left out.
+      setLogs(
+        declined === "containerFiles.noRuntime"
+          ? logs.filter((l) => l.stage !== "runtime")
+          : logs,
+      );
     }
     if (declined) {
       addLog({ type: "error", stage: "handshake", message: t(declined) });
-      setHostKeyDeclined(true);
+      setRetryHeld(true);
       return;
     }
     if (!logs?.length) {
@@ -451,7 +457,7 @@ function ContainerFilesInner({
 
   const handleRetry = () => {
     setBlocked(null);
-    setHostKeyDeclined(false);
+    setRetryHeld(false);
     initializingRef.current = false;
     setSessionId(null);
     setConnected(false);
@@ -461,7 +467,7 @@ function ContainerFilesInner({
 
   const connectRetry = useConnectionRetry({
     connect: handleRetry,
-    enabled: !prompt && !showAuthDialog && !hostKeyDeclined,
+    enabled: !prompt && !showAuthDialog && !retryHeld,
     autoStart: false,
   });
   retryRef.current = connectRetry;
@@ -469,8 +475,8 @@ function ContainerFilesInner({
   // Shows the failure without scheduling a retry: this runs after the render in
   // which the retry was switched off.
   React.useEffect(() => {
-    if (hostKeyDeclined) retryRef.current?.markFailed();
-  }, [hostKeyDeclined]);
+    if (retryHeld) retryRef.current?.markFailed();
+  }, [retryHeld]);
 
   const hostDetail = currentHost
     ? `${currentHost.username ? currentHost.username + "@" : ""}${currentHost.ip}:${currentHost.port}`

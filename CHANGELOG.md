@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.4
+
+### Changed
+
+- The package scripts `pack` and `format` were added, and unused code was removed.
+
+### Fixed
+
+- The Russian translation is now loaded: it was shipped where Termix does not look for it, so the plugin stayed in English. The plugin name and description are translated too.
+- A host without docker or podman shows its message once and waits for you to retry, instead of reconnecting over and over.
+- A failed check for docker or podman (for example when the SSH command could not run) is shown as a connection error, not as "neither docker nor podman was found".
+- When cancelling a transfer fails, you now see a message instead of nothing happening.
+- Every local desktop route is described in the API docs, and a test checks that each translation key the interface uses exists in English and Russian.
+- Remaining English error texts in the interface are translated.
+
 ## 1.0.3
 
 ### Added

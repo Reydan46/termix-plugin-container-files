@@ -232,7 +232,7 @@ export function watchProgress(
       .then((n) => {
         if (!stopped) progress.setProcessed(n);
       })
-      .catch(() => {})
+      .catch(() => {}) // progress is a hint; the operation itself does not depend on it
       .finally(() => {
         busy = false;
       });

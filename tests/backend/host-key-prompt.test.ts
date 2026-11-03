@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  hostKeyDeclinedKey,
+  settledFailureKey,
   hostKeyInfoOf,
 } from "../../src/frontend/hostKeyPrompt";
 
@@ -54,15 +54,16 @@ describe("hostKeyInfoOf", () => {
   });
 });
 
-describe("hostKeyDeclinedKey", () => {
+describe("settledFailureKey", () => {
   it("names a message for the two decisions only", () => {
-    expect(hostKeyDeclinedKey("HOST_KEY_REJECTED")).toBe(
+    expect(settledFailureKey("HOST_KEY_REJECTED")).toBe(
       "containerFiles.hostKeyRejected",
     );
-    expect(hostKeyDeclinedKey("HOST_KEY_TIMEOUT")).toBe(
+    expect(settledFailureKey("HOST_KEY_TIMEOUT")).toBe(
       "containerFiles.hostKeyTimeout",
     );
-    expect(hostKeyDeclinedKey("SOMETHING_ELSE")).toBeNull();
-    expect(hostKeyDeclinedKey(undefined)).toBeNull();
+    expect(settledFailureKey("NO_RUNTIME")).toBe("containerFiles.noRuntime");
+    expect(settledFailureKey("SOMETHING_ELSE")).toBeNull();
+    expect(settledFailureKey(undefined)).toBeNull();
   });
 });

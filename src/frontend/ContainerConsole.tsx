@@ -135,7 +135,7 @@ export function ContainerConsole({
           try {
             fit.fit();
           } catch {
-            // ignore
+            // The terminal has no size yet (not mounted or hidden): connect with its current size.
           }
           send("connect", {
             sessionId,

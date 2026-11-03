@@ -69,7 +69,7 @@ node scripts/sync-upstream.mjs file-manager --ref <commit|tag|branch>
 
 ## Locales
 
-Edit `locales-src/{en,ru}.json` (interpolation `{{name}}`), then run `node scripts/build-locales.mjs`. It merges the upstream sections from `vendor/locales` with the plugin's own keys (own keys win) into `locales/`.
+Edit `locales-src/{en,ru}.json` (interpolation `{{name}}`), then run `node scripts/build-locales.mjs`. It merges the upstream sections from `vendor/locales` with the plugin's own keys (own keys win) into `locales/` (English in `locales/en.json`, Russian in `locales/translated/ru_RU.json`, where Termix looks for other languages).
 
 ## Tests
 

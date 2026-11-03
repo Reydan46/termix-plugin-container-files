@@ -82,6 +82,7 @@
     "moveCleanupFailed": "Copied, but the originals could not be removed: {{error}}",
     "moveKeptSource": "Some items were not copied, so the originals were kept",
     "cancelled": "Transfer cancelled",
+    "cancelFailed": "Could not cancel the transfer: {{message}}",
     "nothingToTransfer": "Nothing to transfer",
     "missingSkipped": "Skipped, no longer exists: {{names}}",
     "intoItself": "A folder cannot be copied into itself"
@@ -118,6 +119,7 @@
     "browserSignInFailed": "Browser sign-in failed",
     "hostKeyRejected": "The host key was not accepted, so the connection was not made",
     "hostKeyTimeout": "The host key was not confirmed in time, so the connection was not made",
+    "noRuntime": "Neither docker nor podman was found on the host",
     "verificationCodePrompt": "Verification code",
     "limit": {
       "stopped": "The container is stopped.",
@@ -168,6 +170,7 @@
     "mediaTooLargeDescription": "{{name}} is too large to preview in this browser (the limit here is about {{limit}} MB). Download it instead?",
     "download": "Download",
     "invalidName": "A name cannot contain “/”",
+    "invalidTarget": "Invalid container target",
     "createFailed": "Could not create",
     "renameFailed": "Could not rename",
     "delete": "Delete",
@@ -191,10 +194,10 @@
     "archiveOpenMenu": "Open as archive",
     "archiveBanner": "Archive contents (read-only). Extract the archive to change files.",
     "archiveTruncated": "The archive has too many entries; only the first part is shown.",
-    "archiveReadOnly": "Archives are read-only. Extract the archive to change its files.",
+    "archiveReadOnly": "Archives are read-only",
     "archiveNoTool": "Cannot open this archive: \"{{tool}}\" is not installed in the container.",
     "archiveLinkOpen": "Link to {{target}} (links inside archives cannot be followed)",
-    "archiveFolderDownload": "Folders inside an archive cannot be downloaded; extract the archive instead.",
+    "archiveFolderDownload": "Folders inside an archive cannot be downloaded; extract the archive first",
     "linkCreateMenu": "Create link...",
     "linkEditMenu": "Edit link...",
     "linkCreateTitle": "Create a symbolic link",
@@ -397,7 +400,10 @@
     "mountGoTo": "Go to",
     "mountGoToFailed": "Could not open this path.",
     "mountClose": "Close",
-    "serverOlder": "The plugin on the server is older than this app and does not support this action. Update the plugin on the server."
+    "serverOlder": "The plugin on the server is older than this app and does not support this action. Update the plugin on the server.",
+    "previewTooLarge": "The file is too large to preview in this browser. Download it instead.",
+    "notArchivePath": "Not an archive path",
+    "requestFailed": "The request failed."
   },
   "containers": {
     "back": "Back to containers",
@@ -440,5 +446,9 @@
     "loadProgress": "{{loaded}} of {{total}} ({{percent}}%)",
     "loadProgressUnknown": "{{loaded}} downloaded",
     "cancelLoad": "Cancel"
+  },
+  "plugin": {
+    "name": "Container Files",
+    "description": "Browse, edit and transfer files in Docker and Podman containers over SSH."
   }
 }

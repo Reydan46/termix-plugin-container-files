@@ -396,7 +396,7 @@ export async function removeTempDir(): Promise<void> {
   const dir = current;
   current = null;
   if (dir && ours(dir))
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined); // best effort: a leftover temp directory is harmless
 }
 
 /**

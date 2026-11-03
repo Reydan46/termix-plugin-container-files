@@ -167,8 +167,8 @@ export async function pipeToHandle(
     return loaded;
   } catch (error) {
     // Discards the partial file instead of leaving a truncated one behind.
-    await writable.abort(error).catch(() => undefined);
-    await reader.cancel().catch(() => undefined);
+    await writable.abort(error).catch(() => undefined); // already failing: the original error is the one reported
+    await reader.cancel().catch(() => undefined); // already failing: the original error is the one reported
     throw error;
   }
 }

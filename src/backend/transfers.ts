@@ -134,7 +134,7 @@ export async function download(
   );
   const stderr = { text: "" };
   const done = channelDone(channel, stderr);
-  done.catch(() => {});
+  done.catch(() => {}); // the stream's own error path reports it; this only avoids an unhandled rejection
   const onAbort = () => {
     channel.destroy();
     if (!res.writableEnded) res.destroy();
@@ -420,5 +420,5 @@ export async function removeTemp(
     t.client,
     execScriptCommand(t.runtime, t.containerId, `rm -f -- "$1"`, [tempPath]),
     { timeoutMs: 15_000 },
-  ).catch(() => {});
+  ).catch(() => {}); // best effort: a leftover temp file is harmless
 }

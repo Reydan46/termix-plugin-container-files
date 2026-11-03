@@ -19,16 +19,13 @@ describe("old server plugin", () => {
   });
 
   it("maps an axios 404 without a code to the update message", () => {
-    const error = toApiError({ response: { status: 404, data: {} } }, "x");
+    const error = toApiError({ response: { status: 404, data: {} } });
     expect(error.code).toBe(SERVER_OLDER_CODE);
     expect(error.message).toBe("containerFiles.serverOlder");
     expect(
-      toApiError(
-        {
-          response: { status: 404, data: { code: "NOT_FOUND", error: "gone" } },
-        },
-        "x",
-      ).message,
+      toApiError({
+        response: { status: 404, data: { code: "NOT_FOUND", error: "gone" } },
+      }).message,
     ).toBe("gone");
   });
 

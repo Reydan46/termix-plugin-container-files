@@ -172,5 +172,5 @@ async function removeTree(t: ListTarget, path: string): Promise<void> {
     t.client,
     execScriptCommand(t.runtime, t.containerId, `rm -rf -- "$1"`, [path]),
     { timeoutMs: 30_000 },
-  ).catch(() => {});
+  ).catch(() => {}); // best effort: a leftover temp file is harmless
 }

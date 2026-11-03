@@ -2,6 +2,7 @@
 // File Manager code addresses everything by a "session id" string; here that
 // string is a target key: "<sshSessionId>|<containerId>".
 
+import { toast } from "sonner";
 import { getApp } from "./app";
 import type { MountInfo } from "./mountLookup";
 import { isVirtualPath, parseVirtualPath, virtualPath } from "./archivePath";
@@ -40,7 +41,8 @@ export function parseTarget(key: string): {
   containerId: string;
 } {
   const i = key.lastIndexOf("|");
-  if (i < 0) throw new ContainerApiError("Invalid container target");
+  if (i < 0)
+    throw new ContainerApiError(getApp().t("containerFiles.invalidTarget"));
   return { sessionId: key.slice(0, i), containerId: key.slice(i + 1) };
 }
 
@@ -78,7 +80,7 @@ function olderServerError(status: number, data?: Record<string, unknown>) {
   );
 }
 
-export function toApiError(error: unknown, action: string): ContainerApiError {
+export function toApiError(error: unknown): ContainerApiError {
   if (error instanceof ContainerApiError) return error;
   const e = error as AxiosLike;
   const data = e?.response?.data;
@@ -87,15 +89,17 @@ export function toApiError(error: unknown, action: string): ContainerApiError {
   const message =
     data?.error ||
     data?.message ||
-    (error instanceof Error ? error.message : `Failed to ${action}`);
+    (error instanceof Error
+      ? error.message
+      : getApp().t("containerFiles.requestFailed"));
   return new ContainerApiError(message, e?.response?.status, data?.code, data);
 }
 
-async function call<T>(action: string, run: () => Promise<{ data: T }>) {
+async function call<T>(run: () => Promise<{ data: T }>) {
   try {
     return (await run()).data;
   } catch (error) {
-    throw toApiError(error, action);
+    throw toApiError(error);
   }
 }
 
@@ -125,7 +129,7 @@ export const sessionApi = {
     credentials?: Credentials,
     hostKeyPrompt = false,
   ) =>
-    call<ConnectResult>("connect", () =>
+    call<ConnectResult>(() =>
       getApp().api.post(via(sessionId, "/ssh/connect"), {
         sessionId,
         hostId,
@@ -134,31 +138,31 @@ export const sessionApi = {
       }),
     ),
   answerHostKey: (sessionId: string, action: "accept" | "reject") =>
-    call<ConnectResult>("answer the host key question", () =>
+    call<ConnectResult>(() =>
       getApp().api.post(via(sessionId, "/ssh/connect-host-key"), {
         sessionId,
         action,
       }),
     ),
   answerTotp: (sessionId: string, totpCode: string) =>
-    call<ConnectResult>("verify the code", () =>
+    call<ConnectResult>(() =>
       getApp().api.post(via(sessionId, "/ssh/connect-totp"), {
         sessionId,
         totpCode,
       }),
     ),
   continueBrowserSignIn: (sessionId: string) =>
-    call<ConnectResult>("continue after a browser sign-in", () =>
+    call<ConnectResult>(() =>
       getApp().api.post(via(sessionId, "/ssh/connect-browser-sign-in"), {
         sessionId,
       }),
     ),
   disconnect: (sessionId: string) =>
-    call("disconnect", () =>
+    call(() =>
       getApp().api.post(via(sessionId, "/ssh/disconnect"), { sessionId }),
     ),
   keepalive: (sessionId: string) =>
-    call("keep the session alive", () =>
+    call(() =>
       getApp().api.post(via(sessionId, "/ssh/keepalive"), { sessionId }),
     ),
   status: (sessionId: string) =>
@@ -166,28 +170,22 @@ export const sessionApi = {
       connected: boolean;
       runtime?: "docker" | "podman";
       runtimeVersion?: string | null;
-    }>("get the status", () =>
+    }>(() =>
       getApp().api.get(via(sessionId, "/ssh/status"), {
         params: { sessionId },
       }),
     ),
   containers: (sessionId: string) =>
-    call<{ runtime: "docker" | "podman"; containers: ContainerInfo[] }>(
-      "list containers",
-      () => getApp().api.get(via(sessionId, `/containers/${enc(sessionId)}`)),
+    call<{ runtime: "docker" | "podman"; containers: ContainerInfo[] }>(() =>
+      getApp().api.get(via(sessionId, `/containers/${enc(sessionId)}`)),
     ),
   capabilities: (key: string) =>
-    call<Capabilities>("probe the container", () =>
-      getApp().api.get(`${base(key)}/capabilities`),
-    ),
+    call<Capabilities>(() => getApp().api.get(`${base(key)}/capabilities`)),
   state: (key: string) =>
-    call<ContainerLiveState>("read the container state", () =>
-      getApp().api.get(`${base(key)}/state`),
-    ),
+    call<ContainerLiveState>(() => getApp().api.get(`${base(key)}/state`)),
   action: (key: string, action: ContainerAction) =>
-    call<ContainerLiveState & { success: boolean }>(
-      `${action} the container`,
-      () => getApp().api.post(`${base(key)}/action`, { action }),
+    call<ContainerLiveState & { success: boolean }>(() =>
+      getApp().api.post(`${base(key)}/action`, { action }),
     ),
 };
 
@@ -208,9 +206,7 @@ export interface Principals {
 }
 
 export function fetchPrincipals(key: string): Promise<Principals> {
-  return call<Principals>("read users and groups", () =>
-    getApp().api.get(`${base(key)}/fs/principals`),
-  );
+  return call<Principals>(() => getApp().api.get(`${base(key)}/fs/principals`));
 }
 
 export interface ContainerShells {
@@ -223,7 +219,7 @@ export interface ContainerShells {
 /** Shells found in the container; a missing route counts as "none found". */
 export async function fetchShells(key: string): Promise<ContainerShells> {
   try {
-    const data = await call<Partial<ContainerShells>>("list shells", () =>
+    const data = await call<Partial<ContainerShells>>(() =>
       getApp().api.get(`${base(key)}/shells`),
     );
     return {
@@ -243,7 +239,7 @@ export async function fetchMounts(
   signal?: AbortSignal,
 ): Promise<MountInfo[]> {
   try {
-    const data = await call<{ mounts?: MountInfo[] }>("list mounts", () =>
+    const data = await call<{ mounts?: MountInfo[] }>(() =>
       getApp().api.get(`${base(key)}/mounts`, { signal }),
     );
     return Array.isArray(data.mounts) ? data.mounts : [];
@@ -319,7 +315,7 @@ export async function listFiles(
     `${base(key)}/fs/list?path=${enc(path)}`,
     { signal: options.signal },
   );
-  if (!response.ok) throw await responseError(response, "list files");
+  if (!response.ok) throw await responseError(response);
   const files: FileItem[] = [];
   let meta: FileListMeta = { path, tier: "find", truncated: false, total: 0 };
 
@@ -368,12 +364,16 @@ export async function listArchiveFolder(
   signal?: AbortSignal,
 ): Promise<ListResult> {
   const v = parseVirtualPath(dir);
-  if (!v) throw new ContainerApiError("Not an archive path", 400);
+  if (!v)
+    throw new ContainerApiError(
+      getApp().t("containerFiles.notArchivePath"),
+      400,
+    );
   const response = await getApp().fetch(
     `${base(key)}/fs/archive/list?archive=${enc(v.archive)}&path=${enc(v.inner)}`,
     { signal },
   );
-  if (!response.ok) throw await responseError(response, "open the archive");
+  if (!response.ok) throw await responseError(response);
   const data = (await response.json()) as {
     entries: WireEntry[];
     truncated: boolean;
@@ -403,7 +403,7 @@ export async function listArchiveEntries(
     `${base(key)}/fs/archive/list?archive=${enc(archive)}&path=${enc(inner)}`,
     { signal },
   );
-  if (!response.ok) throw await responseError(response, "open the archive");
+  if (!response.ok) throw await responseError(response);
   return (await response.json()) as {
     entries: WireEntry[];
     truncated: boolean;
@@ -411,17 +411,18 @@ export async function listArchiveEntries(
   };
 }
 
-const READ_ONLY_ARCHIVE = "Archives are read-only";
-
 function assertWritable(path: string): void {
   if (parseVirtualPath(path)) {
-    throw new ContainerApiError(READ_ONLY_ARCHIVE, 405, "READ_ONLY");
+    throw new ContainerApiError(
+      getApp().t("containerFiles.archiveReadOnly"),
+      405,
+      "READ_ONLY",
+    );
   }
 }
 
 export async function responseError(
   response: Response,
-  action: string,
 ): Promise<ContainerApiError> {
   let data: Record<string, unknown> | undefined;
   try {
@@ -434,7 +435,7 @@ export async function responseError(
   const message =
     (data?.error as string) ||
     (data?.message as string) ||
-    `Failed to ${action} (${response.status})`;
+    `${getApp().t("containerFiles.requestFailed")} (${response.status})`;
   return new ContainerApiError(
     message,
     response.status,
@@ -464,7 +465,7 @@ function op<T = Record<string, unknown>>(
         if (typeof item === "string") assertWritable(item);
     }
   }
-  return call<T>(name, () =>
+  return call<T>(() =>
     getApp().api.post(`${base(key)}/fs/${name}`, body, { signal }),
   );
 }
@@ -565,10 +566,8 @@ export const fsApi = {
    * `entries`). An older server answers with SERVER_OLDER_CODE.
    */
   extractPlan: (key: string, archive: string, entries?: string[]) =>
-    call<{ items: ExtractPlanItem[]; truncated?: boolean }>(
-      "plan the extraction",
-      () =>
-        getApp().api.post(`${base(key)}/fs/extract-plan`, { archive, entries }),
+    call<{ items: ExtractPlanItem[]; truncated?: boolean }>(() =>
+      getApp().api.post(`${base(key)}/fs/extract-plan`, { archive, entries }),
     ),
   /** Extracts chosen entries (archive-inner paths) into `dest`. */
   extractEntries: (
@@ -581,7 +580,7 @@ export const fsApi = {
     choices?: ExtractChoices,
   ) => {
     assertWritable(dest);
-    return call<{ ok: boolean }>("extract entries", () =>
+    return call<{ ok: boolean }>(() =>
       getApp().api.post(
         `${base(key)}/fs/extract-entries`,
         {
@@ -599,7 +598,7 @@ export const fsApi = {
   sha256: (key: string, path: string) =>
     op<{ sha256: string }>(key, "sha256", { path }),
   stat: (key: string, path: string) =>
-    call<WireEntry>("stat", () =>
+    call<WireEntry>(() =>
       getApp().api.get(`${base(key)}/fs/stat`, { params: { path } }),
     ),
 };
@@ -616,13 +615,13 @@ export interface TextFile {
 export function readTextFile(key: string, path: string): Promise<TextFile> {
   const v = parseVirtualPath(path);
   if (v) {
-    return call<TextFile>("read the file", () =>
+    return call<TextFile>(() =>
       getApp().api.get(`${base(key)}/fs/archive/entry`, {
         params: { archive: v.archive, path: v.inner },
       }),
     );
   }
-  return call<TextFile>("read the file", () =>
+  return call<TextFile>(() =>
     getApp().api.get(`${base(key)}/fs/read`, { params: { path } }),
   );
 }
@@ -643,7 +642,7 @@ export async function writeTextFile(
     headers: { "Content-Type": "application/octet-stream" },
     body: new TextEncoder().encode(content),
   });
-  if (!response.ok) throw await responseError(response, "save the file");
+  if (!response.ok) throw await responseError(response);
   return (await response.json()) as { mtime: number; size: number };
 }
 
@@ -672,7 +671,7 @@ export async function openDownload(
   const v = parseVirtualPath(path);
   if (v && kind === "directory") {
     throw new ContainerApiError(
-      "Folders inside an archive cannot be downloaded; extract the archive first",
+      getApp().t("containerFiles.archiveFolderDownload"),
       400,
       "NOT_A_FILE",
     );
@@ -683,7 +682,7 @@ export async function openDownload(
       : `${base(key)}/transfer/download?path=${enc(path)}&kind=${kind}&transferId=${enc(transferId)}`,
     { signal: options.signal },
   );
-  if (!response.ok) throw await responseError(response, "download");
+  if (!response.ok) throw await responseError(response);
   return response;
 }
 
@@ -712,7 +711,7 @@ export async function downloadBlob(
   const total = Number(response.headers.get("content-length")) || undefined;
   const tooLarge = () =>
     new ContainerApiError(
-      "This download is too large for this browser; use Chrome or Edge to save it to disk",
+      getApp().t("containerFiles.downloadTooLarge"),
       413,
       "TOO_LARGE",
     );
@@ -805,7 +804,7 @@ export async function uploadFile(
       signal: options.signal,
     },
   );
-  if (!response.ok) throw await responseError(response, "upload");
+  if (!response.ok) throw await responseError(response);
   return (await response.json()) as { bytes: number };
 }
 
@@ -825,7 +824,7 @@ export function transferStatus(
   return getApp()
     .api.get(`${originPrefix(origin)}/transfers/${enc(transferId)}`)
     .then((r: { data: TransferStatus }) => r.data)
-    .catch(() => null);
+    .catch(() => null); // a missed poll is retried by the next one
 }
 
 export function cancelTransfer(
@@ -834,7 +833,15 @@ export function cancelTransfer(
 ): Promise<unknown> {
   return getApp()
     .api.post(`${originPrefix(origin)}/transfers/${enc(transferId)}/cancel`, {})
-    .catch(() => undefined);
+    .catch((error: unknown) => {
+      // Callers fire this and move on, so the failure is shown here: the
+      // transfer may still be running on the host.
+      toast.error(
+        getApp().t("workspace.cancelFailed", {
+          message: toApiError(error).message,
+        }),
+      );
+    });
 }
 
 // ---- container to container --------------------------------------------
@@ -861,7 +868,7 @@ export function copyBetween(
     return Promise.reject(
       new Error(getApp().t("containerFiles.archiveReadOnly")),
     );
-  return call("copy between containers", () =>
+  return call(() =>
     getApp().api.post(
       via(sessionId, `/containers/${enc(sessionId)}/copy`),
       body,
@@ -906,7 +913,7 @@ export function localUpload(
     return Promise.reject(
       new Error(getApp().t("containerFiles.archiveReadOnly")),
     );
-  return call("upload from this computer", () =>
+  return call(() =>
     getApp().api.post(
       "/local/transfer/upload",
       { sessionId, ...body, origin: originOfSession(sessionId) },
@@ -932,7 +939,7 @@ export function localDownload(
     return Promise.reject(
       new Error(getApp().t("containerFiles.archiveReadOnly")),
     );
-  return call("download to this computer", () =>
+  return call(() =>
     getApp().api.post(
       "/local/transfer/download",
       { sessionId, ...body, origin: originOfSession(sessionId) },
@@ -963,5 +970,5 @@ export function operationStatus(
   return getApp()
     .api.get(`${originPrefix(origin)}/operations/${enc(opId)}`)
     .then((r: { data: OpStatus }) => r.data)
-    .catch(() => null);
+    .catch(() => null); // a missed poll is retried by the next one
 }

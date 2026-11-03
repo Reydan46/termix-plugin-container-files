@@ -30,14 +30,20 @@ export function hostKeyInfoOf(result: ConnectResult): HostKeyInfo | null {
 }
 
 /**
- * The translated message for a connect that ended on the host key, or null
- * for any other failure. These are decisions, not faults: retrying them by
- * itself would only ask the same question again.
+ * The translated message for a connect that ended on an answer a retry cannot
+ * change: the host key was turned down, or the host has no docker or podman.
+ * Retrying by itself would only meet the same answer again, so the retry waits
+ * for the person. Null for any other failure.
  */
-export function hostKeyDeclinedKey(
+export function settledFailureKey(
   code: string | undefined,
-): "containerFiles.hostKeyRejected" | "containerFiles.hostKeyTimeout" | null {
+):
+  | "containerFiles.hostKeyRejected"
+  | "containerFiles.hostKeyTimeout"
+  | "containerFiles.noRuntime"
+  | null {
   if (code === "HOST_KEY_REJECTED") return "containerFiles.hostKeyRejected";
   if (code === "HOST_KEY_TIMEOUT") return "containerFiles.hostKeyTimeout";
+  if (code === "NO_RUNTIME") return "containerFiles.noRuntime";
   return null;
 }

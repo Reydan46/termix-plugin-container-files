@@ -359,7 +359,7 @@ async function writeTarToLocal(sink: LocalSink, input: Readable) {
         result.bytesWritten += received;
       } catch (error) {
         (download.stream as unknown as Writable).destroy?.();
-        await download.abort().catch(() => {});
+        await download.abort().catch(() => {}); // already failing: the original error is the one reported
         throw error;
       }
     } catch (error) {

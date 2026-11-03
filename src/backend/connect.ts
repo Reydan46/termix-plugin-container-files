@@ -349,7 +349,26 @@ export async function startConnect(
         return;
       }
 
-      const runtime = await detectRuntime(connection.client).catch(() => null);
+      let runtime: Awaited<ReturnType<typeof detectRuntime>>;
+      try {
+        runtime = await detectRuntime(connection.client);
+      } catch (error) {
+        // The probe itself failed (SSH dropped, exec refused, timed out):
+        // that is a connection failure, not proof the host lacks a runtime.
+        connection.dispose();
+        const message = getErrorMessage(error, "SSH connection failed");
+        log.error("Runtime detection failed", {
+          hostId,
+          userId,
+          error: message,
+        });
+        logs.push(connectionLog("error", "runtime", message));
+        pending.emit({
+          status: 500,
+          body: { success: false, message, connectionLogs: logs },
+        });
+        return;
+      }
       if (!runtime) {
         connection.dispose();
         logs.push(
@@ -373,7 +392,7 @@ export async function startConnect(
       const runtimeVersion = await detectRuntimeVersion(
         connection.client,
         runtime,
-      ).catch(() => null);
+      ).catch(() => null); // the version is optional, the connect goes on without it
 
       const session: ContainerSession = {
         id: sessionId,

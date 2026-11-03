@@ -266,8 +266,9 @@ describe("archive format locale keys", () => {
   });
 
   it("is built into locales/", () => {
-    for (const lang of ["en", "ru"]) {
-      const built = JSON.parse(readFileSync(`locales/${lang}.json`, "utf8"));
+    // Termix reads English from locales/ and the rest from locales/translated/.
+    for (const file of ["en.json", "translated/ru_RU.json"]) {
+      const built = JSON.parse(readFileSync(`locales/${file}`, "utf8"));
       expect(typeof at(built, "containerFiles.archiveDelete")).toBe("string");
       expect(typeof at(built, "containerFiles.deleteUnsupported.rar")).toBe(
         "string",

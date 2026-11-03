@@ -4,16 +4,12 @@ import { getApp } from "../../../app";
 import {
   ContainerApiError,
   downloadBlob,
-  fsApi,
-  joinPath,
-  listFiles,
   parseTarget,
   readTextFile,
   saveBlob,
   sessionApi,
   writeTextFile,
 } from "../../../containerFsApi";
-import type { FileItem } from "../host-types";
 import { isPreviewableKind, previewSizeLimit } from "../../../mediaPreview";
 import { notifyEditRejected } from "../../../editGate";
 import { resolveFilePreviewKind } from "../file-preview-preload";
@@ -66,31 +62,11 @@ async function downloadAsObjectUrl(
     // Whatever the browser reports for a cancelled fetch, the caller sees an abort.
     if (outer?.aborted) throw new DOMException("Aborted", "AbortError");
     if (tooLarge)
-      throw new ContainerApiError(
-        "The file is too large to preview in this browser. Download it instead.",
-      );
+      throw new ContainerApiError(getApp().t("containerFiles.previewTooLarge"));
     throw error;
   } finally {
     outer?.removeEventListener("abort", onOuterAbort);
   }
-}
-
-export async function listSSHFiles(
-  sessionId: string,
-  path: string,
-  _options: { force?: boolean } = {},
-): Promise<{ files: FileItem[]; path: string }> {
-  const { files, path: resolved } = await listFiles(sessionId, path);
-  return { files, path: resolved };
-}
-
-export async function createSSHFolder(
-  sessionId: string,
-  path: string,
-  folderName: string,
-  _hostId?: number,
-): Promise<Record<string, unknown>> {
-  return fsApi.mkdir(sessionId, joinPath(path, folderName));
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -210,30 +186,3 @@ export async function downloadSSHFileStream(
   saveBlob(blob, fileName);
 }
 
-export interface DownloadedSSHFile {
-  /** base64-encoded file contents */
-  content: string;
-  fileName: string;
-  size: number;
-  mimeType: string;
-  path: string;
-}
-
-export async function downloadSSHFile(
-  sessionId: string,
-  filePath: string,
-): Promise<DownloadedSSHFile> {
-  const { blob, fileName } = await downloadBlob(sessionId, filePath, "file");
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  }
-  return {
-    content: btoa(binary),
-    fileName,
-    size: bytes.length,
-    mimeType: blob.type || "application/octet-stream",
-    path: filePath,
-  };
-}

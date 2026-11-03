@@ -114,6 +114,19 @@ export function registerDesktop(
     return local ? loadKnownFolders(local) : {};
   });
 
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/home:
+   *   get:
+   *     summary: "Local home folder, path separator and platform (desktop)"
+   *     tags:
+   *       - Container Files
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("home", "get", async (local) => {
     const info = await local.info();
     return {
@@ -122,28 +135,207 @@ export function registerDesktop(
       platform: info.platform,
     };
   });
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/known-folders:
+   *   get:
+   *     summary: "Local known folders such as Desktop and Downloads (desktop)"
+   *     tags:
+   *       - Container Files
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("known-folders", "get", async () => ({
     folders: await knownFolders(),
   }));
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/list:
+   *   post:
+   *     summary: "List a local folder (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               path:
+   *                 type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("list", "post", (local, b) => local.fs.list(text(b.path, "path")));
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/mkdir:
+   *   post:
+   *     summary: "Create a local folder (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               parent:
+   *                 type: string
+   *               name:
+   *                 type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("mkdir", "post", async (local, b) => ({
     path: await local.fs.mkdir(text(b.parent, "parent"), text(b.name, "name")),
   }));
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/create-file:
+   *   post:
+   *     summary: "Create an empty local file (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               parent:
+   *                 type: string
+   *               name:
+   *                 type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("create-file", "post", async (local, b) => ({
     path: await local.fs.createFile(
       text(b.parent, "parent"),
       text(b.name, "name"),
     ),
   }));
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/rename:
+   *   post:
+   *     summary: "Rename a local file or folder (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               path:
+   *                 type: string
+   *               name:
+   *                 type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("rename", "post", async (local, b) => ({
     path: await local.fs.rename(text(b.path, "path"), text(b.name, "name")),
   }));
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/trash:
+   *   post:
+   *     summary: "Move local files or folders to the trash (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               paths:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("trash", "post", (local, b) =>
     local.fs.trash(textList(b.paths, "paths")),
   );
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/exists:
+   *   post:
+   *     summary: "Tell which of the given local paths exist (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               paths:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("exists", "post", async (local, b) => ({
     existing: await local.fs.exists(textList(b.paths, "paths")),
   }));
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/ensure-dir:
+   *   post:
+   *     summary: "Create a local folder and its parents (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               path:
+   *                 type: string
+   *               root:
+   *                 type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("ensure-dir", "post", async (local, b) => ({
     path: await local.fs.ensureDir(
       text(b.path, "path"),
@@ -152,13 +344,81 @@ export function registerDesktop(
         : text(b.root, "root"),
     ),
   }));
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/walk:
+   *   post:
+   *     summary: "List every file under the given local paths (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               paths:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("walk", "post", (local, b) =>
     local.fs.walk(textList(b.paths, "paths")),
   );
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/reveal:
+   *   post:
+   *     summary: "Show a local path in the system file manager (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               path:
+   *                 type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("reveal", "post", async (local, b) => {
     await local.fs.reveal(text(b.path, "path"));
     return {};
   });
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/open:
+   *   post:
+   *     summary: "Open a local path with the system default app (desktop)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               path:
+   *                 type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("open", "post", async (local, b) => {
     await local.fs.open(text(b.path, "path"));
     return {};
@@ -172,10 +432,49 @@ export function registerDesktop(
     if ((await local.info()).platform !== "win32")
       throw new HttpError(400, "Windows only", "UNSUPPORTED");
   };
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/clipboard/prepare:
+   *   post:
+   *     summary: "Make the temp directory for a container Copy (desktop, Windows)"
+   *     tags:
+   *       - Container Files
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("clipboard/prepare", "post", async (local) => {
     await windowsOnly(local);
     return { dir: await prepareTempDir() };
   });
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/clipboard/set:
+   *   post:
+   *     summary: "Put the files copied from a container on the Windows clipboard (desktop, Windows)"
+   *     tags:
+   *       - Container Files
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               dir:
+   *                 type: string
+   *               names:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("clipboard/set", "post", async (local, b) => {
     await windowsOnly(local);
     const names = Array.isArray(b.names) ? b.names.slice(0, 500) : [];
@@ -267,6 +566,19 @@ export function registerDesktop(
       cleared: await clearPathsClipboard(local, checkLocalPaths(b.paths)),
     };
   });
+  /**
+   * @openapi
+   * /plugin-api/container-files/local/clipboard/clear:
+   *   post:
+   *     summary: "Remove the temp copy of an earlier container Copy (desktop)"
+   *     tags:
+   *       - Container Files
+   *     responses:
+   *       200:
+   *         description: "success, or success false with error and a code"
+   *       404:
+   *         description: "Not the desktop app (code NOT_DESKTOP)"
+   */
   handle("clipboard/clear", "post", async () => {
     await removeTempDir();
     return {};

@@ -1,4 +1,3 @@
-import React from "react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { useWindowManager } from "../vendor/file-manager/components/WindowManager";
 import { ConflictWindow } from "./ConflictWindow";

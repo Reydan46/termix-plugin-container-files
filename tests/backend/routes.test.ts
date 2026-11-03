@@ -73,6 +73,20 @@ describe("routes", () => {
     expect(status.body.connected).toBe(false);
   });
 
+  it("reports a failed runtime probe as a connection failure, not NO_RUNTIME", async () => {
+    const client = new FakeClient();
+    client.exec = (() => {
+      throw new Error("channel exploded");
+    }) as never;
+    server = await startServer({ client });
+    const r = await connect(server);
+    expect(r.status).toBe(500);
+    expect(r.body.code).not.toBe("NO_RUNTIME");
+    expect(r.body.message).toContain("channel exploded");
+    const status = await server.request("GET", "/ssh/status?sessionId=s1");
+    expect(status.body.connected).toBe(false);
+  });
+
   it("answers 400 for sessions that do not exist", async () => {
     server = await startServer();
     const r = await server.request("GET", "/containers/nope");

@@ -33,7 +33,7 @@ export async function openCpSource(
   );
   const stderr = { text: "" };
   const done = channelDone(channel, stderr);
-  done.catch(() => {});
+  done.catch(() => {}); // the stream's own error path reports it; this only avoids an unhandled rejection
   const stream = new PassThrough();
   let closed = false;
 

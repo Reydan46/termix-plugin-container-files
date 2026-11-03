@@ -388,7 +388,9 @@ export function LocalFileManager({
         resolveShortcuts(home.home, home.separator, localPathsExist, known),
       )
       .then((found) => !cancelled && setShortcuts(found))
+      // Shortcuts are a convenience: without them the sidebar just shows fewer entries.
       .catch(() => undefined);
+    // A failed drive scan leaves the previous drive list in place; nothing to report.
     if (home.separator === "\\") void refreshDrives().catch(() => undefined);
     return () => {
       cancelled = true;
@@ -934,6 +936,7 @@ export function LocalFileManager({
             drives,
             shortcuts,
             recents,
+            // Same as the first scan: on failure the old drive list stays.
             onOpen: () => void refreshDrives().catch(() => undefined),
           }}
           loading={loading}
