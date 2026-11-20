@@ -1,6 +1,14 @@
 import React from "react";
 import { DIALOG_DEFAULT } from "./popup/useDialogKeys";
-import { Checkbox, Input } from "@termix-ssh/plugin-sdk/ui";
+import {
+  Checkbox,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@termix-ssh/plugin-sdk/ui";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { usePopupWindow } from "./popup/PopupContext";
 import {
@@ -68,19 +76,25 @@ function RecursiveRow({
         />
         {label}
       </label>
-      <select
+      <Select
         value={scope}
         disabled={!checked}
-        aria-label={label}
-        onChange={(e) => onScope(e.target.value as ApplyScope)}
-        className="h-6 rounded-none border border-border bg-muted/50 px-1 text-[11px] disabled:opacity-50"
+        onValueChange={(value) => onScope(value as ApplyScope)}
       >
-        {SCOPES.map((value) => (
-          <option key={value} value={value}>
-            {names[value]}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger
+          aria-label={label}
+          className="h-6 rounded-none px-1 text-[11px]"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {SCOPES.map((value) => (
+            <SelectItem key={value} value={value}>
+              {names[value]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

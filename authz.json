@@ -1,0 +1,501 @@
+{
+  "routes": {
+    "POST /plugin-api/container-files/ssh/connect": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "body": {
+        "sessionId": "authz-s",
+        "hostId": 1,
+        "action": "reject",
+        "totpCode": "000000"
+      }
+    },
+    "POST /plugin-api/container-files/ssh/connect-totp": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "body": {
+        "sessionId": "authz-s",
+        "hostId": 1,
+        "action": "reject",
+        "totpCode": "000000"
+      }
+    },
+    "POST /plugin-api/container-files/ssh/connect-browser-sign-in": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "body": {
+        "sessionId": "authz-s",
+        "hostId": 1,
+        "action": "reject",
+        "totpCode": "000000"
+      }
+    },
+    "POST /plugin-api/container-files/ssh/connect-host-key": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "body": {
+        "sessionId": "authz-s",
+        "hostId": 1,
+        "action": "reject",
+        "totpCode": "000000"
+      }
+    },
+    "POST /plugin-api/container-files/ssh/disconnect": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "body": {
+        "sessionId": "authz-s",
+        "hostId": 1,
+        "action": "reject",
+        "totpCode": "000000"
+      }
+    },
+    "POST /plugin-api/container-files/ssh/keepalive": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "body": {
+        "sessionId": "authz-s",
+        "hostId": 1,
+        "action": "reject",
+        "totpCode": "000000"
+      }
+    },
+    "GET /plugin-api/container-files/diagnostics": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any"
+    },
+    "GET /plugin-api/container-files/ssh/status": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "query": {
+        "sessionId": "authz-s"
+      }
+    },
+    "GET /plugin-api/container-files/containers/:sessionId": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s"
+      }
+    },
+    "GET /plugin-api/container-files/containers/:sessionId/:containerId/state": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      }
+    },
+    "GET /plugin-api/container-files/containers/:sessionId/:containerId/shells": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      }
+    },
+    "GET /plugin-api/container-files/containers/:sessionId/:containerId/mounts": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      }
+    },
+    "POST /plugin-api/container-files/containers/:sessionId/:containerId/action": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      },
+      "body": {
+        "action": "stop"
+      },
+      "destructive": true
+    },
+    "GET /plugin-api/container-files/containers/:sessionId/:containerId/fs/principals": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      }
+    },
+    "POST /plugin-api/container-files/containers/:sessionId/:containerId/fs/:op": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c",
+        "op": "=mkdir"
+      },
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "GET /plugin-api/container-files/containers/:sessionId/:containerId/fs/stat": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      },
+      "query": {
+        "path": "/etc/hostname"
+      }
+    },
+    "GET /plugin-api/container-files/containers/:sessionId/:containerId/fs/read": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      },
+      "query": {
+        "path": "/etc/hostname"
+      }
+    },
+    "GET /plugin-api/container-files/containers/:sessionId/:containerId/fs/archive/list": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      },
+      "query": {
+        "path": "/etc/hostname"
+      }
+    },
+    "GET /plugin-api/container-files/containers/:sessionId/:containerId/fs/archive/entry": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      },
+      "query": {
+        "path": "/etc/hostname"
+      }
+    },
+    "PUT /plugin-api/container-files/containers/:sessionId/:containerId/fs/write": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      },
+      "query": {
+        "path": "/authz"
+      },
+      "body": {},
+      "destructive": true
+    },
+    "GET /plugin-api/container-files/containers/:sessionId/:containerId/transfer/download": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      },
+      "query": {
+        "path": "/etc/hostname"
+      }
+    },
+    "PUT /plugin-api/container-files/containers/:sessionId/:containerId/transfer/upload": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s",
+        "containerId": "=authz-c"
+      },
+      "query": {
+        "path": "/authz"
+      },
+      "body": {},
+      "destructive": true
+    },
+    "GET /plugin-api/container-files/operations/:opId": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "opId": "=authz-op"
+      }
+    },
+    "GET /plugin-api/container-files/transfers/:transferId": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "transferId": "=authz-t"
+      }
+    },
+    "POST /plugin-api/container-files/transfers/:transferId/cancel": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "transferId": "=authz-t"
+      },
+      "body": {}
+    },
+    "POST /plugin-api/container-files/containers/:sessionId/copy": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "params": {
+        "sessionId": "=authz-s"
+      },
+      "body": {
+        "from": {},
+        "to": {}
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/transfer/upload": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "body": {},
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/transfer/download": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH, which the matrix has none of; refusals are still checked.",
+      "body": {}
+    },
+    "ALL /plugin-api/container-files/remote/*": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only: forwards to the linked server. Refusals are still checked."
+    },
+    "GET /plugin-api/container-files/local/home": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404."
+    },
+    "GET /plugin-api/container-files/local/known-folders": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404."
+    },
+    "POST /plugin-api/container-files/local/list": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      }
+    },
+    "POST /plugin-api/container-files/local/mkdir": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/create-file": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/rename": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/trash": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/exists": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      }
+    },
+    "POST /plugin-api/container-files/local/ensure-dir": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/walk": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      }
+    },
+    "POST /plugin-api/container-files/local/reveal": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/open": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/clipboard/prepare": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      }
+    },
+    "POST /plugin-api/container-files/local/clipboard/set": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/clipboard/set-paths": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      },
+      "destructive": true
+    },
+    "POST /plugin-api/container-files/local/clipboard/read": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      }
+    },
+    "POST /plugin-api/container-files/local/clipboard/clear-paths": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      }
+    },
+    "POST /plugin-api/container-files/local/clipboard/clear": {
+      "access": "user",
+      "permission": "container-files.use",
+      "allowed": "any",
+      "note": "Desktop only; the web build answers 404.",
+      "body": {
+        "path": "/authz"
+      }
+    },
+    "WS /plugin-ws/container-files/console": {
+      "access": "user",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH (console) or the desktop app (local-events). Refusals are still checked."
+    },
+    "WS /plugin-ws/container-files/local-events": {
+      "access": "user",
+      "allowed": "any",
+      "note": "Needs a docker host over SSH (console) or the desktop app (local-events). Refusals are still checked."
+    }
+  }
+}

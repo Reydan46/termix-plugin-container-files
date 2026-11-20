@@ -1,6 +1,11 @@
 import { PassThrough } from "node:stream";
 import { cpError } from "./cp-io.js";
-import { channelDone, openChannel, openChannelAbortable } from "./exec.js";
+import {
+  channelDone,
+  killChannel,
+  openChannel,
+  openChannelAbortable,
+} from "./exec.js";
 import type { ListTarget } from "./fs-list.js";
 import { cpFromCommand } from "./tar.js";
 
@@ -64,7 +69,7 @@ export async function openCpSource(
     channel,
     close: () => {
       closed = true;
-      channel.destroy();
+      killChannel(channel);
       stream.destroy();
     },
   };

@@ -1,6 +1,4 @@
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
-import { rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { PluginDesktopLocal } from "@termix-ssh/plugin-sdk/backend";
 import { getErrorMessage, HttpError } from "./helpers.js";
@@ -357,13 +355,30 @@ export async function readFileClipboard(
 
 /** The temp copy of the last Copy: one directory at a time. */
 let current: string | null = null;
-let exitHandler: (() => void) | null = null;
+/** The plugin's own data folder, where temp copies live (set on activate). */
+let baseDir: string | null = null;
 
 function ours(dir: string): boolean {
   return (
+    baseDir !== null &&
     basename(dir).startsWith(TEMP_PREFIX) &&
-    dirname(dir) === dirname(join(tmpdir(), "x"))
+    resolve(dirname(dir)).toLowerCase() === resolve(baseDir).toLowerCase()
   );
+}
+
+/**
+ * Sets the folder temp copies are made in (the plugin's data folder) and
+ * removes copies a previous run left behind.
+ */
+export async function initTempDir(dataDir: string): Promise<void> {
+  baseDir = dataDir;
+  current = null;
+  const names = await readdir(dataDir).catch(() => [] as string[]);
+  for (const name of names)
+    if (name.startsWith(TEMP_PREFIX))
+      await rm(join(dataDir, name), { recursive: true, force: true }).catch(
+        () => undefined, // best effort: a leftover temp directory is harmless
+      );
 }
 
 /** True when `path` is the current temp copy or inside it. */
@@ -375,20 +390,10 @@ export function insideTempDir(path: string): boolean {
 }
 
 export async function prepareTempDir(): Promise<string> {
+  if (!baseDir) throw new Error("Temp folder is not ready");
   await removeTempDir();
-  const dir = await mkdtemp(join(tmpdir(), TEMP_PREFIX));
+  const dir = await mkdtemp(join(baseDir, TEMP_PREFIX));
   current = dir;
-  if (!exitHandler) {
-    exitHandler = () => {
-      if (current && ours(current))
-        try {
-          rmSync(current, { recursive: true, force: true });
-        } catch {
-          /* best effort */
-        }
-    };
-    process.once("exit", exitHandler);
-  }
   return dir;
 }
 
@@ -417,9 +422,8 @@ export async function checkTempCopy(
   return current;
 }
 
-/** Plugin disable: removes the temp copy and the process exit handler. */
+/** Plugin disable: removes the temp copy. */
 export async function disposeTempDir(): Promise<void> {
-  if (exitHandler) process.removeListener("exit", exitHandler);
-  exitHandler = null;
   await removeTempDir();
+  baseDir = null;
 }

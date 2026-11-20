@@ -7,7 +7,8 @@
     "addLocal": "Local files",
     "addContainer": "Container",
     "openLocal": "Browse this computer's files",
-    "noContainerPane": "Open a container pane first"
+    "alreadyOpen": "The local files panel is already open",
+    "noContainerPane": "Open a container panel first"
   },
   "localFiles": {
     "places": "Drives and places",
@@ -32,12 +33,12 @@
     "drive": "Drive"
   },
   "workspace": {
-    "addPane": "Add pane",
-    "maxPanes": "At most 4 panes",
-    "closePane": "Close pane",
+    "addPane": "Add panel",
+    "maxPanes": "At most 4 panels",
+    "closePane": "Close panel",
     "closeEmpty": "Close this empty area (the neighbour takes its space)",
-    "dragPane": "Drag the header to rearrange panes",
-    "movePane": "Move pane to...",
+    "dragPane": "Drag the header to rearrange panels",
+    "movePane": "Move panel to...",
     "dock": {
       "left": "Left half",
       "right": "Right half",
@@ -53,7 +54,7 @@
     "changeContainer": "Change container",
     "pickContainer": "Choose a container",
     "addContainer": "Add container",
-    "paneNotReady": "The pane is still loading",
+    "paneNotReady": "The panel is still loading",
     "archiveSource": "Cannot copy or move files out of an archive. Extract it first.",
     "conflictTitle": "Items already exist",
     "conflictDesc": "{{count}} item(s) already exist in {{target}}. Choose what to do with each.",
@@ -185,6 +186,7 @@
     "cut": "Cut: {{count}}",
     "pasteFailed": "Could not paste",
     "pathCopied": "Path copied",
+    "pathCopyFailed": "Could not copy the path",
     "chmodDone": "Permissions changed",
     "chmodFailed": "Could not change permissions",
     "compressDone": "Created {{name}}",
@@ -308,10 +310,10 @@
     "archiveAddUnsupported": "Adding files to archives is not supported",
     "archiveUp": "Up",
     "archiveExtractSelected": "Extract selected...",
-    "archiveExtractSelectedHint": "Select entries, then drag them to a file pane or use this button",
+    "archiveExtractSelectedHint": "Select entries, then drag them to a file panel or use this button",
     "archiveExtractedCount": "Extracted {{count}} item(s) to {{dest}}",
     "archiveExtractOverwriteDesc": "Some of the selected items already exist in {{dest}}. Overwrite them?",
-    "archiveOtherContainer": "Entries can only be extracted into a pane of the same container.",
+    "archiveOtherContainer": "Entries can only be extracted into a panel of the same container.",
     "archiveEntriesTitle": "{{count}} selected",
     "compressingName": "Compressing {{name}}…",
     "appendMenu": "Add to archive...",
@@ -410,6 +412,13 @@
     "refresh": "Refresh",
     "loading": "Loading containers…",
     "searchPlaceholder": "Search containers…",
+    "sortBy": "Sort by",
+    "sort": {
+      "name": "Name (A–Z)",
+      "nameDesc": "Name (Z–A)",
+      "state": "State",
+      "image": "Image"
+    },
     "allStatuses": "All",
     "stateRunning": "Running",
     "statePaused": "Paused",

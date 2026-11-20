@@ -1,7 +1,7 @@
 {
   "name": "@termix-plugin/container-files",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "build": "termix-plugin build",
@@ -38,17 +38,22 @@
     "tar-stream": "^3.1.7"
   },
   "devDependencies": {
-    "@termix-ssh/plugin-sdk": "^1.0.20",
+    "@termix-ssh/plugin-sdk": "^2.10.1",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/tar-stream": "^3.1.4",
+    "i18next": "^26.7.2",
+    "jsdom": "^29.1.1",
     "prettier": "3.9.9",
+    "react-i18next": "^17.1.13",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
-    "@termix-ssh/plugin-sdk": "^1.0.20",
+    "@termix-ssh/plugin-sdk": "^2.10.1",
     "axios": "^1.19.0",
     "express": "^5.2.1",
     "react": "^19.2.8",

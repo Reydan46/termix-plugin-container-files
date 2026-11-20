@@ -1,5 +1,5 @@
 diff --git a/components/AudioPreview.tsx b/components/AudioPreview.tsx
-index a8e9741..810527d 100644
+index 6348c2a..c07f854 100644
 --- a/components/AudioPreview.tsx
 +++ b/components/AudioPreview.tsx
 @@ -4,6 +4,7 @@ import "react-h5-audio-player/lib/styles.css";
@@ -10,7 +10,7 @@ index a8e9741..810527d 100644
  
  interface FileItem {
    name: string;
-@@ -56,7 +57,7 @@ export function AudioPreview({
+@@ -59,7 +60,7 @@ export function AudioPreview({
  }: AudioPreviewProps) {
    const { t } = useTranslation();
    const ext = file.name.split(".").pop()?.toLowerCase() || "";
@@ -20,18 +20,18 @@ index a8e9741..810527d 100644
    return (
      <div className="p-6 flex items-center justify-center h-full">
 diff --git a/components/FileViewer.tsx b/components/FileViewer.tsx
-index c0f3f3c..464c195 100644
+index 26e8889..ed2558d 100644
 --- a/components/FileViewer.tsx
 +++ b/components/FileViewer.tsx
 @@ -2,6 +2,7 @@
  import React, { Suspense, lazy, useState, useEffect, useRef } from "react";
- import { cn } from "@termix-ssh/plugin-sdk/ui";
+ import { cn, LoadingState } from "@termix-ssh/plugin-sdk/ui";
  import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 +import { mediaSource } from "../api/ssh-file-operations-api";
  import {
    FileText,
    Image as ImageIcon,
-@@ -759,7 +760,7 @@ export function FileViewer({
+@@ -762,7 +763,7 @@ export function FileViewer({
                    }
                  })();
  
@@ -41,10 +41,10 @@ index c0f3f3c..464c195 100644
                  return (
                    <div className="relative">
 diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
-index 8255f88..9946b0b 100644
+index e0616a2..6c55f53 100644
 --- a/components/FileWindow.tsx
 +++ b/components/FileWindow.tsx
-@@ -89,6 +89,14 @@ export function FileWindow({
+@@ -112,6 +112,14 @@ export function FileWindow({
  
    const currentWindow = windows.find((w) => w.id === windowId);
  
@@ -59,7 +59,7 @@ index 8255f88..9946b0b 100644
    useEffect(() => {
      if (!window.electronAPI?.isElectron) return;
  
-@@ -510,14 +518,10 @@ export function FileWindow({
+@@ -531,14 +539,10 @@ export function FileWindow({
        );
        toast.success(
          t("fileManager.fileDownloadedSuccessfully", { name: file.name }),
@@ -75,15 +75,17 @@ index 8255f88..9946b0b 100644
          return;
        }
  
-@@ -528,14 +532,16 @@ export function FileWindow({
-       ) {
-         toast.error(
-           `SSH connection failed. Please check your connection to ${sshHost.name} (${sshHost.ip}:${sshHost.port})`,
+@@ -553,16 +557,18 @@ export function FileWindow({
+             ip: sshHost.ip,
+             port: sshHost.port,
+           }),
 -          { id: toastId, duration: undefined },
          );
        } else {
          toast.error(
-           `Failed to download file: ${err.message || "Unknown error"}`,
+           `${t("fileManager.downloadFileFailed")}: ${
+             err.message || t("fileManager.unknownError")
+           }`,
 -          { id: toastId, duration: undefined },
          );
        }
@@ -95,12 +97,12 @@ index 8255f88..9946b0b 100644
    };
  
 diff --git a/components/ImagePreview.tsx b/components/ImagePreview.tsx
-index 9ae6565..ef223bc 100644
+index f9640f9..65b2dab 100644
 --- a/components/ImagePreview.tsx
 +++ b/components/ImagePreview.tsx
 @@ -4,6 +4,7 @@ import "react-photo-view/dist/react-photo-view.css";
  import { AlertCircle, Download } from "lucide-react";
- import { Button } from "@termix-ssh/plugin-sdk/ui";
+ import { Button, LoadingState } from "@termix-ssh/plugin-sdk/ui";
  import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 +import { mediaSource } from "../api/ssh-file-operations-api";
  
@@ -116,12 +118,12 @@ index 9ae6565..ef223bc 100644
  
  export function ImagePreview({
 diff --git a/components/PdfPreview.tsx b/components/PdfPreview.tsx
-index b7c207e..0d53f0e 100644
+index f044323..ab1bbfb 100644
 --- a/components/PdfPreview.tsx
 +++ b/components/PdfPreview.tsx
 @@ -3,6 +3,7 @@ import { Document, Page, pdfjs } from "react-pdf";
  import { AlertCircle, Download } from "lucide-react";
- import { Button } from "@termix-ssh/plugin-sdk/ui";
+ import { Button, LoadingState } from "@termix-ssh/plugin-sdk/ui";
  import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 +import { mediaSource } from "../api/ssh-file-operations-api";
  import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";

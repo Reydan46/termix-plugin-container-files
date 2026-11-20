@@ -12,6 +12,7 @@
  * plugin's needs.
  */
 
+import { hostOfClient } from "./exec.js";
 import type { Client } from "ssh2";
 import type {
   PluginContext,
@@ -180,7 +181,8 @@ export interface StartConnectInput {
 /** A person turned the host key down, or never answered. */
 class HostKeyDeclined extends Error {
   constructor(
-    readonly code: "HOST_KEY_REJECTED" | "HOST_KEY_TIMEOUT",
+    readonly code:
+      "HOST_KEY_REJECTED" | "HOST_KEY_TIMEOUT" | "HOST_KEY_UNTRUSTED",
     message: string,
   ) {
     super(message);
@@ -309,10 +311,23 @@ export async function startConnect(
     try {
       return await connectOnce();
     } catch (error) {
-      if (!input.hostKeyPrompt || pending.abandoned || !isHostKeyRefusal(error))
-        throw error;
+      if (!isHostKeyRefusal(error)) throw error;
+      // The check asks core over a socket of ours, which API 2 does not give a
+      // plugin without credentials:read. Without a prompt the person is told
+      // what Termix says: open a terminal to the host once.
+      if (!input.hostKeyPrompt) {
+        throw new HostKeyDeclined(
+          "HOST_KEY_UNTRUSTED",
+          error instanceof Error
+            ? error.message
+            : "The host key is not trusted",
+        );
+      }
+      if (pending.abandoned) throw error;
+      const notes: string[] = [];
       const result = await negotiateHostKey(ctx, {
         host,
+        note: (reason) => notes.push(reason),
         prompt: { ask },
         isAbandoned: () => pending.abandoned,
         asker: {
@@ -335,6 +350,9 @@ export async function startConnect(
             "The host key was not confirmed in time",
           );
         default:
+          if (notes.length > 0 && error instanceof Error) {
+            error.message += ` (host key check unavailable: ${notes.join("; ")})`;
+          }
           throw error;
       }
     }
@@ -408,6 +426,7 @@ export async function startConnect(
         mounts: new Map(),
         capabilities: new Map(),
       };
+      hostOfClient.set(connection.client, hostId);
       sessions.add(session);
 
       void ctx.audit.record({

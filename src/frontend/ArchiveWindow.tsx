@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+import { LoadingState } from "@termix-ssh/plugin-sdk/ui";
 import { formatFileSize } from "./vendor/file-manager/file-manager-utils";
 import {
   isLocalFilesDrag,
@@ -548,9 +549,7 @@ ${dir}`;
         {error ? (
           <p className="p-3 text-destructive">{error}</p>
         ) : loading ? (
-          <p className="p-3 text-muted-foreground">
-            {t("containerFiles.archiveLoading")}
-          </p>
+          <LoadingState compact label={t("containerFiles.archiveLoading")} />
         ) : entries.length === 0 ? (
           <p className="p-3 text-muted-foreground">
             {t("containerFiles.archiveEmpty")}

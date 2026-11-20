@@ -1788,7 +1788,14 @@ function Inner({
     const controller = new AbortController();
     const active = new Map<
       string,
-      { name: string; size: number; bytes: number }
+      {
+        name: string;
+        size: number;
+        bytes: number;
+        offset: number;
+        /** The transfer that reports the piece being sent. */
+        tid: string;
+      }
     >();
     let finishedBytes = 0;
     let totalBytes = entries.reduce((sum, e) => sum + e.file.size, 0);
@@ -1816,7 +1823,8 @@ function Inner({
             label: t("fileManager.cancel"),
             onClick: () => {
               controller.abort();
-              for (const tid of active.keys()) void cancelTransfer(tid, origin);
+              for (const a of active.values())
+                void cancelTransfer(a.tid, origin);
             },
           },
         },
@@ -1874,9 +1882,12 @@ function Inner({
       }
       render();
       poll = setInterval(() => {
-        for (const [tid, a] of active) {
+        for (const [key, a] of active) {
+          const tid = a.tid;
           void transferStatus(tid, origin).then((s) => {
-            if (s && active.has(tid)) a.bytes = s.bytes;
+            // An answer for a piece that has finished since is stale.
+            if (s && active.get(key) === a && a.tid === tid)
+              a.bytes = Math.max(a.bytes, a.offset + s.bytes);
           });
         }
         render();
@@ -1889,6 +1900,8 @@ function Inner({
           name: entry.file.name,
           size: entry.file.size,
           bytes: 0,
+          offset: 0,
+          tid: transferId,
         });
         render();
         try {
@@ -1902,6 +1915,13 @@ function Inner({
               mtime: Math.floor(entry.file.lastModified / 1000),
               transferId,
               signal: controller.signal,
+              onPiece: (tid, offset) => {
+                const a = active.get(transferId);
+                if (!a) return;
+                a.tid = tid;
+                a.offset = offset;
+                a.bytes = Math.max(a.bytes, offset);
+              },
             },
           );
         } catch (error) {
@@ -2220,7 +2240,8 @@ function Inner({
           onCopyPath={(f) => {
             void navigator.clipboard
               ?.writeText(f.map((x) => x.path).join("\n"))
-              .then(() => toast.success(t("containerFiles.pathCopied")));
+              .then(() => toast.success(t("containerFiles.pathCopied")))
+              .catch(() => toast.error(t("containerFiles.pathCopyFailed")));
           }}
         />
 

@@ -61,6 +61,19 @@ function isDisplayableText(str: string): boolean {
   return printable / Math.min(str.length, 1000) > 0.85;
 }
 
+/** Shows base64 file content as text when it decodes to readable UTF-8. */
+function decodeFileContent(content: string, encoding?: string): string {
+  if (encoding !== "base64") return content;
+  try {
+    const bytes = Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
+    const decoded = new TextDecoder("utf-8").decode(bytes);
+    return isDisplayableText(decoded) ? decoded : content;
+  } catch {
+    // Not valid UTF-8, keep the raw content
+    return content;
+  }
+}
+
 export function FileWindow({
   windowId,
   file,
@@ -86,7 +99,8 @@ export function FileWindow({
   } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isEditable, setIsEditable] = useState(false);
-  const [pendingContent, setPendingContent] = useState<string>("");
+  // null means no unsaved edit, so an emptied file still counts as a change.
+  const [pendingContent, setPendingContent] = useState<string | null>(null);
   const [resetKey, setResetKey] = useState(0);
   const [mediaDimensions, setMediaDimensions] = useState<
     { width: number; height: number } | undefined
@@ -143,24 +157,13 @@ export function FileWindow({
           },
         });
         if (controller.signal.aborted) return;
-        let fileContent = response.content || "";
-
-        if (response.encoding === "base64") {
-          try {
-            const bytes = Uint8Array.from(atob(fileContent), (c) =>
-              c.charCodeAt(0),
-            );
-            const decoded = new TextDecoder("utf-8").decode(bytes);
-            if (isDisplayableText(decoded)) {
-              fileContent = decoded;
-            }
-          } catch {
-            // Not valid UTF-8, keep the raw content
-          }
-        }
+        const fileContent = decodeFileContent(
+          response.content || "",
+          response.encoding,
+        );
 
         setContent(fileContent);
-        setPendingContent(fileContent);
+        setPendingContent(null);
         setResetKey((k) => k + 1);
 
         if (!file.size) {
@@ -295,9 +298,12 @@ export function FileWindow({
         const response = await readSSHFile(sshSessionId, file.path, {
           force: true,
         });
-        const fileContent = response.content || "";
+        const fileContent = decodeFileContent(
+          response.content || "",
+          response.encoding,
+        );
         setContent(fileContent);
-        setPendingContent("");
+        setPendingContent(null);
         setResetKey((k) => k + 1);
 
         if (!file.size) {
@@ -332,7 +338,7 @@ export function FileWindow({
     await handleSave(pending);
   };
 
-  const handleSave = async (newContent: string) => {
+  const handleSave = async (newContent: string, auto = false) => {
     try {
       setIsSaving(true);
 
@@ -340,14 +346,20 @@ export function FileWindow({
 
       await writeSSHFile(sshSessionId, file.path, newContent);
       setContent(newContent);
-      setPendingContent("");
+      setPendingContent(null);
 
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
         autoSaveTimerRef.current = null;
       }
 
-      toast.success(t("fileManager.fileSavedSuccessfully"));
+      toast.success(
+        t(
+          auto
+            ? "fileManager.fileAutoSaved"
+            : "fileManager.fileSavedSuccessfully",
+        ),
+      );
     } catch (error: unknown) {
       const err = error as {
         message?: string;
@@ -385,13 +397,9 @@ export function FileWindow({
     }
 
     if (newContent !== content) {
-      autoSaveTimerRef.current = setTimeout(async () => {
-        try {
-          await handleSave(newContent);
-          toast.success(t("fileManager.fileAutoSaved"));
-        } catch (error) {
-          toast.error(t("fileManager.autoSaveFailed"));
-        }
+      // handleSave shows its own result, success or failure.
+      autoSaveTimerRef.current = setTimeout(() => {
+        void handleSave(newContent, true);
       }, 60000);
     }
   };
@@ -458,7 +466,9 @@ export function FileWindow({
         );
       } else {
         toast.error(
-          `${t("fileManager.failedToDownloadFile")}: ${err.message || t("fileManager.unknownError")}`,
+          `${t("fileManager.downloadFileFailed")}: ${
+            err.message || t("fileManager.unknownError")
+          }`,
         );
       }
     } finally {
@@ -511,7 +521,7 @@ export function FileWindow({
     >
       <FileViewer
         file={file}
-        content={pendingContent || content}
+        content={pendingContent ?? content}
         savedContent={content}
         isLoading={isLoading}
         loadProgress={loadProgress}

@@ -39,6 +39,7 @@
         "hooks/useResizableColumns.ts",
         "host-types.ts",
         "lib/local-files.ts",
+        "lib/shortcut-key.ts",
         "local-transfer-utils.ts",
         "local-types.ts"
       ]

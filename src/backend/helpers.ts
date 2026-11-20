@@ -109,3 +109,6 @@ export function partName(transferId: string, name: string): string {
   const room = MAX_NAME_BYTES - Buffer.byteLength(head + ext) - hash.length - 1;
   return `${head}${cutBytes(stem, room)}~${hash}${ext}`;
 }
+
+/** Errors nobody caught (see index.ts), newest last. */
+export const strayErrors: { at: string; error: string }[] = [];

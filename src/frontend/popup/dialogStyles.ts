@@ -3,14 +3,14 @@ export const DIALOG_BUTTONS_CLASS = "tfm-dialog-buttons";
 
 const STYLE_ID = "tfm-dialog-buttons-style";
 
-// The focused button is the one Enter activates: a two-tone ring (readable on
-// light and dark backgrounds), a tint over its own fill and bold text.
+// The focused button is the one Enter activates: a two-tone ring from the Termix theme
+// tokens (so it follows light and dark), a tint over its own fill and bold text.
 export const DIALOG_BUTTONS_CSS = `
 .${DIALOG_BUTTONS_CLASS} button:focus,
 .${DIALOG_BUTTONS_CLASS} button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #2563eb, 0 0 0 5px rgba(0, 0, 0, 0.45);
-  background-image: linear-gradient(rgba(59, 130, 246, 0.28), rgba(59, 130, 246, 0.28));
+  box-shadow: 0 0 0 2px var(--background, Canvas), 0 0 0 4px var(--accent-brand, Highlight), 0 0 0 5px color-mix(in oklab, var(--foreground, CanvasText) 45%, transparent);
+  background-image: linear-gradient(color-mix(in oklab, var(--accent-brand, Highlight) 28%, transparent), color-mix(in oklab, var(--accent-brand, Highlight) 28%, transparent));
   font-weight: 600;
   position: relative;
   z-index: 1;

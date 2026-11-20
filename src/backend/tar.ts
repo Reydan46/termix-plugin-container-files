@@ -102,6 +102,7 @@ export function sanitizeTar(
 ): tar.Pack {
   const extract = tar.extract();
   const pack = tar.pack();
+  pack.on("error", () => {});
   const fail = (error: Error) => {
     (input as { unpipe?: (d: unknown) => void }).unpipe?.(extract);
     input.destroy();
@@ -170,6 +171,9 @@ export function packSingleFile(
   attrs: { mode?: number; mtime?: Date; owner?: Owner } = {},
 ): tar.Pack {
   const pack = tar.pack();
+  // The consumer attaches its listener only after the channel opens; a body
+  // that dies before that would otherwise be an uncaught 'error'.
+  pack.on("error", () => {});
   const entry = pack.entry(
     {
       name,
@@ -186,6 +190,10 @@ export function packSingleFile(
     },
   );
   body.on("error", (e) => pack.destroy(e));
+  // A body that ends short ("Size mismatch", the cancel of an upload) errors
+  // the entry too. The callback above already ends the pack with it, and an
+  // 'error' event nobody listens to would stop the whole plugin process.
+  (entry as unknown as NodeJS.EventEmitter).on("error", () => {});
   body.pipe(entry);
   return pack;
 }

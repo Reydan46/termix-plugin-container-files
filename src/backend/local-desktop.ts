@@ -6,7 +6,6 @@ import type {
 import { getErrorMessage, HttpError } from "./helpers.js";
 import { createKnownFoldersCache, loadKnownFolders } from "./known-folders.js";
 import type { LocalEvents } from "./local-events.js";
-import { stat } from "node:fs/promises";
 import {
   checkLocalPaths,
   checkTempCopy,
@@ -512,7 +511,8 @@ export function registerDesktop(
   handle("clipboard/set-paths", "post", async (local, b) => {
     await windowsOnly(local);
     const paths = checkLocalPaths(b.paths);
-    for (const p of paths) await stat(p);
+    const found = new Set(await local.fs.exists(paths));
+    for (const p of paths) if (!found.has(p)) throw new Error("Path not found");
     await removeTempDir();
     await setPathsClipboard(local, paths);
     return {};

@@ -30,6 +30,7 @@ import {
   connectionLog,
   getErrorMessage,
   HttpError,
+  strayErrors,
   type ConnectionLogLine,
   type Logger,
 } from "./helpers.js";
@@ -55,6 +56,7 @@ import {
   EDITOR_MAX_BYTES,
 } from "./fs-read-write.js";
 import { safeName, safePath } from "./shell-quote.js";
+import { reapLog } from "./exec.js";
 import {
   contentDisposition,
   download,
@@ -160,7 +162,11 @@ export function registerRoutes(
     res.on("close", () => {
       if (!res.writableFinished) controller.abort();
     });
-    req.on("aborted", () => controller.abort());
+    // A request whose body was read in full is destroyed afterwards and also
+    // says "aborted" (the sandbox never marks it complete); that is no abort.
+    req.on("aborted", () => {
+      if (!req.readableEnded) controller.abort();
+    });
     return controller.signal;
   };
 
@@ -526,6 +532,23 @@ export function registerRoutes(
    *       400:
    *         description: "sessionId missing"
    */
+  /**
+   * @openapi
+   * /plugin-api/container-files/diagnostics:
+   *   get:
+   *     summary: "Recent cleanups of cancelled commands and stray errors"
+   *     tags:
+   *       - Container Files
+   *     responses:
+   *       200:
+   *         description: "reaps (how each cleanup of a cancelled host process ended) and stray (errors the plugin caught instead of stopping)"
+   */
+  router.get("/diagnostics", (_req, res) => {
+    const userId = userOf(res);
+    if (!userId) return;
+    return res.json({ success: true, reaps: reapLog, stray: strayErrors });
+  });
+
   router.get("/ssh/status", (req, res) => {
     const userId = userOf(res);
     if (!userId) return;
@@ -1567,6 +1590,10 @@ export function registerRoutes(
    *       - { name: mtime, in: query, required: false, schema: { type: number } }
    *       - { name: size, in: query, required: false, schema: { type: integer }, description: "Byte count used when the request has no Content-Length" }
    *       - { name: transferId, in: query, required: false, schema: { type: string } }
+   *       - { name: group, in: query, required: false, schema: { type: string }, description: "Id shared by the pieces of one chunked upload" }
+   *       - { name: part, in: query, required: false, schema: { type: integer }, description: "Index of this piece" }
+   *       - { name: parts, in: query, required: false, schema: { type: integer }, description: "Number of pieces" }
+   *       - { name: abort, in: query, required: false, schema: { type: string }, description: "Drop the stored pieces before part" }
    *     requestBody:
    *       required: true
    *       content:
@@ -1623,6 +1650,15 @@ export function registerRoutes(
           overwrite: flag(req.query.overwrite),
           mode,
           size: sizeParam(req.query.size),
+          chunk:
+            typeof req.query.group === "string"
+              ? {
+                  group: req.query.group,
+                  part: Number(req.query.part),
+                  parts: Number(req.query.parts),
+                  abort: flag(req.query.abort),
+                }
+              : undefined,
           mtime:
             Number.isFinite(mtimeSec) && mtimeSec > 0
               ? new Date(mtimeSec * 1000)

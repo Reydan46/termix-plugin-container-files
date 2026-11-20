@@ -2,6 +2,7 @@ import React from "react";
 import { DIALOG_DEFAULT } from "./popup/useDialogKeys";
 import { ArrowUp, File, Folder } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+import { LoadingState } from "@termix-ssh/plugin-sdk/ui";
 import { usePopupWindow } from "./popup/PopupContext";
 import { usePopups } from "./popup/usePopups";
 import { useWindowManager } from "./vendor/file-manager/components/WindowManager";
@@ -120,9 +121,7 @@ export function PathPickerWindow({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto border border-border">
         {loading && (
-          <p className="p-2 text-xs text-muted-foreground">
-            {t("containerFiles.pickerLoading")}
-          </p>
+          <LoadingState compact label={t("containerFiles.pickerLoading")} />
         )}
         {error && <p className="p-2 text-xs text-destructive">{error}</p>}
         {!loading && !error && entries.length === 0 && (

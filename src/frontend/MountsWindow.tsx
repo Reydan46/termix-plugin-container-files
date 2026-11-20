@@ -1,7 +1,7 @@
 import React from "react";
 import { DIALOG_DEFAULT } from "./popup/useDialogKeys";
-import { Loader2 } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+import { LoadingState } from "@termix-ssh/plugin-sdk/ui";
 import { usePopupWindow } from "./popup/PopupContext";
 import { POPUP_ACTIONS, POPUP_BUTTON } from "./popup/popupStyles";
 import { fetchMounts } from "./containerFsApi";
@@ -49,11 +49,7 @@ export function MountsWindow({
   return (
     <>
       <div className="max-h-64 min-h-0 flex-1 overflow-y-auto border border-border">
-        {loading && mounts.length === 0 && (
-          <p className="p-1.5 text-xs text-muted-foreground">
-            <Loader2 className="inline size-3.5 animate-spin" />
-          </p>
-        )}
+        {loading && mounts.length === 0 && <LoadingState compact />}
         {error && <p className="p-1.5 text-xs text-destructive">{error}</p>}
         {!loading && !error && mounts.length === 0 && (
           <p className="p-1.5 text-xs text-muted-foreground">

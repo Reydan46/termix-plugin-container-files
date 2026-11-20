@@ -1,12 +1,15 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { AlertCircle, Download } from "lucide-react";
-import { Button } from "@termix-ssh/plugin-sdk/ui";
+import { Button, LoadingState } from "@termix-ssh/plugin-sdk/ui";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { mediaSource } from "../api/ssh-file-operations-api";
-import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import * as pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs";
 
-pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+// A plugin frame has an opaque origin and cannot start a worker from its own
+// assets, so pdf.js runs its worker code on the main thread instead.
+(globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = pdfjsWorker;
+void pdfjs;
 
 interface PdfPreviewProps {
   content: string;
@@ -27,6 +30,33 @@ export function PdfPreview({
   const [pageNumber, setPageNumber] = useState(1);
   const [pdfScale, setPdfScale] = useState(1.2);
   const [pdfError, setPdfError] = useState(false);
+  const [pdfDetail, setPdfDetail] = useState("");
+  const [bytes, setBytes] = useState<Uint8Array | null>(null);
+
+  // pdf.js would load a blob: or data: URL over the network, which a plugin
+  // frame may not do. Hand it the bytes instead.
+  useEffect(() => {
+    let live = true;
+    setBytes(null);
+    setPdfError(false);
+    setPdfDetail("");
+    void (async () => {
+      try {
+        const response = await fetch(mediaSource(content, "application/pdf"));
+        const data = new Uint8Array(await response.arrayBuffer());
+        if (live) setBytes(data);
+      } catch (error) {
+        if (!live) return;
+        setPdfDetail(error instanceof Error ? error.message : String(error));
+        setPdfError(true);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [content]);
+  // pdf.js takes the buffer it is given, so every load gets its own copy.
+  const file = useMemo(() => (bytes ? { data: bytes.slice() } : null), [bytes]);
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -91,6 +121,9 @@ export function PdfPreview({
                 {t("fileManager.cannotLoadPdf")}
               </h3>
               <p className="text-sm mb-4">{t("fileManager.pdfLoadError")}</p>
+              {pdfDetail && (
+                <p className="text-xs mb-4 font-mono break-all">{pdfDetail}</p>
+              )}
               {onDownload && (
                 <Button
                   variant="outline"
@@ -102,9 +135,13 @@ export function PdfPreview({
                 </Button>
               )}
             </div>
+          ) : !file ? (
+            <div className="p-8">
+              <LoadingState label={t("fileManager.loadingPdf")} />
+            </div>
           ) : (
             <Document
-              file={mediaSource(content, "application/pdf")}
+              file={file}
               onLoadSuccess={({ numPages }) => {
                 setNumPages(numPages);
                 setPdfError(false);
@@ -114,15 +151,17 @@ export function PdfPreview({
                   height: 600,
                 });
               }}
-              onLoadError={() => {
+              onLoadError={(error) => {
+                setPdfDetail(error.message);
+                setPdfError(true);
+              }}
+              onSourceError={(error) => {
+                setPdfDetail(error.message);
                 setPdfError(true);
               }}
               loading={
-                <div className="text-center p-8">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
-                  <p className="text-sm text-muted-foreground">
-                    {t("fileManager.loadingPdf")}
-                  </p>
+                <div className="p-8">
+                  <LoadingState label={t("fileManager.loadingPdf")} />
                 </div>
               }
             >
@@ -131,11 +170,8 @@ export function PdfPreview({
                 scale={pdfScale}
                 className="shadow-lg"
                 loading={
-                  <div className="text-center p-4">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500 mx-auto mb-2"></div>
-                    <p className="text-xs text-muted-foreground">
-                      {t("fileManager.loadingPage")}
-                    </p>
+                  <div className="p-4">
+                    <LoadingState label={t("fileManager.loadingPage")} />
                   </div>
                 }
               />

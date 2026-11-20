@@ -1,3 +1,5 @@
+import { AsyncResource } from "node:async_hooks";
+import { randomBytes } from "node:crypto";
 import type { Client, ClientChannel } from "ssh2";
 import { HttpError } from "./helpers.js";
 
@@ -26,7 +28,9 @@ export const MAX_SESSION_CHANNELS = 6;
  */
 const NESTED_EXTRA = 3;
 const CHANNEL_WAIT_MS = 30_000;
-const OPEN_RETRY_MS = 250;
+/** Timing of the retry after sshd refuses a channel (tests shorten it). */
+export const openTuning = { retryMs: 250, giveUpMs: 12_000 };
+const KILL_AFTER_MS = 2_000;
 const OPEN_FAILED =
   /open failed|administratively prohibited|resource shortage/i;
 
@@ -38,6 +42,11 @@ interface Waiter {
 /** FIFO limiter for the exec channels of one SSH client. */
 class ChannelSlots {
   private held = 0;
+  /**
+   * What the server turned out to allow. Others may share the connection (or
+   * linger from a cancelled transfer), so a refusal lowers it to what we hold.
+   */
+  private cap = Infinity;
   private waiters: Waiter[] = [];
 
   get inUse(): number {
@@ -99,7 +108,20 @@ class ChannelSlots {
   }
 
   private limit(nested: boolean): number {
-    return MAX_SESSION_CHANNELS + (nested ? NESTED_EXTRA : 0);
+    return Math.min(
+      this.cap,
+      MAX_SESSION_CHANNELS + (nested ? NESTED_EXTRA : 0),
+    );
+  }
+
+  /** sshd refused a channel while we held `held` ones: stay below that. */
+  learn(refusedAt: number): void {
+    this.cap = Math.max(1, Math.min(this.cap, refusedAt - 1));
+  }
+
+  /** A channel opened, so the server allows at least this many. */
+  relax(): void {
+    if (this.cap < MAX_SESSION_CHANNELS && this.held >= this.cap) this.cap++;
   }
 
   private next(): void {
@@ -126,6 +148,113 @@ function slotsOf(client: Client): ChannelSlots {
 export function channelLoad(client: Client): { inUse: number; queued: number } {
   const slots = slotsByClient.get(client);
   return { inUse: slots?.inUse ?? 0, queued: slots?.queued ?? 0 };
+}
+
+/** What it takes to stop the remote process of a channel for good. */
+const remoteOf = new WeakMap<
+  ClientChannel,
+  {
+    client: Client;
+    tag: string;
+    exited: boolean;
+    reaping: boolean;
+    scope: AsyncResource;
+  }
+>();
+
+/**
+ * Ends every remote process that carries the channel's tag. Closing an exec
+ * channel does not stop a `docker cp` that waits on stdin or a pipe: it lives
+ * on and blocks every later `docker exec` into that container.
+ */
+/**
+ * Runs a script on the host over a connection of its own. sshd counts
+ * MaxSessions per connection, so this still works when lingering processes
+ * hold every session of the browsing connection. Set by the plugin entry.
+ */
+export const reaper: {
+  run?: (client: Client, script: string) => Promise<string>;
+} = {};
+
+/** The latest reap attempts and how they ended (diagnostics). */
+export const reapLog: {
+  at: string;
+  tag: string;
+  via: string;
+  result: string;
+}[] = [];
+
+/** The host a browsing connection belongs to, for the reaper. */
+export const hostOfClient = new WeakMap<Client, number>();
+
+function scheduleReap(info: {
+  client: Client;
+  tag: string;
+  exited: boolean;
+  reaping: boolean;
+  scope: AsyncResource;
+}): void {
+  if (info.exited || info.reaping) return;
+  info.reaping = true;
+  const timer = setTimeout(() => {
+    if (!info.exited) reapRemote(info);
+  }, 1500);
+  timer.unref?.();
+}
+
+function reapRemote(info: {
+  client: Client;
+  tag: string;
+  scope: AsyncResource;
+}): void {
+  // Plain string: the \0 and \n are for the remote tr, not for this file.
+  const script =
+    'n=0; { for p in /proc/[0-9]*; do tr "\\0" "\\n" < "$p/environ" 2>/dev/null | grep -qx "CF_CH=' +
+    info.tag +
+    '" && { kill -KILL "${p#/proc/}" 2>/dev/null; n=$((n+1)); }; done; } 2>/dev/null; echo killed=$n';
+  const entry = {
+    at: new Date().toISOString(),
+    tag: info.tag,
+    via: "connection",
+    result: "",
+  };
+  reapLog.push(entry);
+  if (reapLog.length > 20) reapLog.shift();
+  const viaChannel = () => {
+    entry.via += "+channel";
+    try {
+      info.client.exec(script, (err, stream) => {
+        if (err || !stream) {
+          entry.result += ` | channel: ${err?.message ?? "no stream"}`;
+          return;
+        }
+        let out = "";
+        stream.on("error", () => {});
+        stream.on("data", (d: Buffer) => (out += d.toString()));
+        stream.on("close", () => {
+          entry.result += ` | channel: ${out.trim()}`;
+        });
+        stream.stderr?.resume();
+      });
+    } catch (error) {
+      entry.result += ` | channel threw: ${(error as Error).message}`;
+    }
+  };
+  if (!reaper.run) {
+    viaChannel();
+    return;
+  }
+  info.scope
+    .runInAsyncScope(() => reaper.run!(info.client, script))
+    .then(
+      (out) => {
+        entry.result = out;
+      },
+      (error: Error) => {
+        entry.result = `connection failed: ${error.message}`;
+        viaChannel();
+      },
+    );
 }
 
 function execOnce(client: Client, command: string): Promise<ClientChannel> {
@@ -166,26 +295,85 @@ export async function openChannel(
   signal?: AbortSignal,
   nested = false,
 ): Promise<ClientChannel> {
-  const release = await slotsOf(client).acquire(signal, nested);
-  try {
-    let channel: ClientChannel;
+  const slots = slotsOf(client);
+  const started = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    const release = await slots.acquire(signal, nested);
     try {
-      channel = await execOnce(client, command);
+      // Engine commands carry a tag so a cancel can find them on the host.
+      const tag = command.startsWith('PATH="')
+        ? randomBytes(8).toString("hex")
+        : "";
+      const channel = await execOnce(
+        client,
+        tag ? `CF_CH=${tag} ${command}` : command,
+      );
+      if (tag) {
+        // The reap runs from a timer; ctx.ssh needs the request that opened it.
+        const scope = new AsyncResource("container-files-reap");
+        const info = { client, tag, exited: false, reaping: false, scope };
+        remoteOf.set(channel, info);
+        // A channel that closes without its process ever reporting an exit was
+        // dropped on our side (a cancel, a broken pipe): the process may live on.
+        channel.once("exit", () => {
+          info.exited = true;
+        });
+        channel.once("close", () => scheduleReap(info));
+      }
+      slots.relax();
+      channel.once("close", release);
+      return channel;
     } catch (error) {
+      const refused = error instanceof Error && OPEN_FAILED.test(error.message);
+      const heldNow = slots.inUse;
+      release();
       if (
-        !(error instanceof Error && OPEN_FAILED.test(error.message)) ||
-        signal?.aborted
-      )
+        !refused ||
+        signal?.aborted ||
+        Date.now() - started > openTuning.giveUpMs
+      ) {
         throw error;
-      await pause(OPEN_RETRY_MS, signal);
-      channel = await execOnce(client, command);
+      }
+      // Lingering sessions (ours or another user of the connection) free up
+      // within moments: stay under what the server allowed and try again.
+      if (heldNow > 1) slots.learn(heldNow);
+      await pause(Math.min(openTuning.retryMs * 2 ** attempt, 2000), signal);
     }
-    channel.once("close", release);
-    return channel;
-  } catch (error) {
-    release();
-    throw error;
   }
+}
+
+/**
+ * Ends a channel for good: asks the remote process to stop (OpenSSH honours
+ * signal requests), closes our side, and insists a moment later. A session
+ * whose process lingers keeps counting against sshd's MaxSessions.
+ */
+export function killChannel(channel: ClientChannel): void {
+  const send = (name: string) => {
+    try {
+      (channel as { signal?: (n: string) => void }).signal?.(name);
+    } catch {
+      // The channel is already closing.
+    }
+  };
+  // docker ignores SIGTERM while it waits on a pipe, so ask for KILL at once.
+  send("KILL");
+  const remote = remoteOf.get(channel);
+  if (remote) scheduleReap(remote);
+  try {
+    channel.destroy();
+  } catch {
+    // Already closed.
+  }
+  const timer = setTimeout(() => {
+    send("KILL");
+    try {
+      channel.destroy();
+    } catch {
+      // Already closed.
+    }
+  }, KILL_AFTER_MS);
+  timer.unref?.();
+  channel.once("close", () => clearTimeout(timer));
 }
 
 /**
@@ -201,7 +389,7 @@ export async function openChannelAbortable(
   signal?.throwIfAborted();
   const channel = await openChannel(client, command, signal, nested);
   if (signal?.aborted) {
-    channel.destroy();
+    killChannel(channel);
     throw new HttpError(499, "Cancelled", "CANCELLED");
   }
   return channel;
@@ -223,6 +411,8 @@ export function channelDone(
       exitCode = code;
     });
     channel.once("error", reject);
+    // Later errors (a write after the channel was killed) must not go unheard.
+    channel.on("error", () => {});
     channel.once("close", (code: number | null) => {
       const final = exitCode ?? code;
       if (final === 0) resolve();
@@ -262,7 +452,7 @@ export async function runCommand(
       fn();
     };
     const fail = (error: Error) => {
-      channel.destroy();
+      killChannel(channel);
       finish(() => reject(error));
     };
     const onAbort = () => fail(new HttpError(499, "Cancelled", "CANCELLED"));

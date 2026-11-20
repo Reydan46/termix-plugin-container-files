@@ -115,6 +115,8 @@ type SavePicker = (options: {
 }) => Promise<SaveHandleLike>;
 
 function picker(): SavePicker | undefined {
+  // A sandboxed frame is not allowed to open a file picker.
+  if (getApp().frame) return undefined;
   const w = globalThis as { showSaveFilePicker?: SavePicker };
   return typeof w.showSaveFilePicker === "function"
     ? w.showSaveFilePicker.bind(globalThis)

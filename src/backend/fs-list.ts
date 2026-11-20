@@ -1,6 +1,6 @@
 import tar from "tar-stream";
 import type { Client } from "ssh2";
-import { openChannel, runCommand } from "./exec.js";
+import { killChannel, openChannel, runCommand } from "./exec.js";
 import { HttpError } from "./helpers.js";
 import { execScriptCommand, type ContainerRuntime } from "./shell-quote.js";
 import type { Capabilities } from "./capabilities.js";
@@ -465,7 +465,7 @@ export async function listViaCp(
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", onAbort);
-      channel.destroy();
+      killChannel(channel);
       if (error) reject(error);
       else {
         resolveSiblingLinks(entries);

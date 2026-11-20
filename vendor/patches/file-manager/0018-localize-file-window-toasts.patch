@@ -1,17 +1,8 @@
 diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
-index 2d3a62c..a7b3700 100644
+index a516700..dfd97fe 100644
 --- a/components/FileWindow.tsx
 +++ b/components/FileWindow.tsx
-@@ -223,11 +223,15 @@ export function FileWindow({
-           err.message?.includes("established")
-         ) {
-           toast.error(
--            `SSH connection failed. Please check your connection to ${sshHost.name} (${sshHost.ip}:${sshHost.port})`,
-+            t("fileManager.sshConnectionFailed", {
-+              name: sshHost.name,
-+              ip: sshHost.ip,
-+              port: sshHost.port,
-+            }),
+@@ -234,7 +234,7 @@ export function FileWindow({
            );
          } else {
            const errorMessage =
@@ -20,21 +11,3 @@ index 2d3a62c..a7b3700 100644
            const isFileNotFound =
              err.isFileNotFound ||
              errorData?.fileNotFound ||
-@@ -431,11 +435,15 @@ export function FileWindow({
-         err.message?.includes("established")
-       ) {
-         toast.error(
--          `SSH connection failed. Please check your connection to ${sshHost.name} (${sshHost.ip}:${sshHost.port})`,
-+          t("fileManager.sshConnectionFailed", {
-+            name: sshHost.name,
-+            ip: sshHost.ip,
-+            port: sshHost.port,
-+          }),
-         );
-       } else {
-         toast.error(
--          `Failed to download file: ${err.message || "Unknown error"}`,
-+          `${t("fileManager.failedToDownloadFile")}: ${err.message || t("fileManager.unknownError")}`,
-         );
-       }
-     } finally {

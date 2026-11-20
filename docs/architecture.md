@@ -6,7 +6,7 @@ An Express router served by the Termix plugin backend.
 
 - `index.ts`, `routes.ts`, `routes-transfer-extra.ts`: HTTP routes (SSH session, containers, `fs/*` operations, transfers, container-to-container copy, desktop local transfers).
 - `sessions.ts`, `connect.ts`: per-user SSH sessions on top of host credentials.
-- `host-key.ts`: asks about a new or changed host key. `ctx.ssh.connect` cannot ask, so after a "verification failed" refusal (and only for a client that sent `hostKeyPrompt`) `connect.ts` runs a probe: `ctx.ssh.prepare` with a socket of ours lets core's verifier ask, the question goes out as a `requires_host_key` step and `POST /ssh/connect-host-key` carries the answer back over HTTP, so it works through the server proxy too. The probe always refuses the handshake and never logs in; core stores the key only on accept, then the real connect runs again. A reject or a timeout ends the connect with `HOST_KEY_REJECTED` or `HOST_KEY_TIMEOUT`; an older server or core keeps the plain error.
+- `host-key.ts`: asks about a new or changed host key. `ctx.ssh.connect` cannot ask, so after a "verification failed" refusal (and only for a client that sent `hostKeyPrompt`) `connect.ts` runs a probe: `ctx.ssh.prepare` with a socket of ours lets core's verifier ask, the question goes out as a `requires_host_key` step and `POST /ssh/connect-host-key` carries the answer back over HTTP, so it works through the server proxy too. The probe always refuses the handshake and never logs in; core stores the key only on accept, then the real connect runs again. A reject or a timeout ends the connect with `HOST_KEY_REJECTED` or `HOST_KEY_TIMEOUT`; an older server or core keeps the plain error. The tab does not show the dialog today (`HOST_KEY_PROMPT` is off, because a frame cannot): a client that does not ask gets `HOST_KEY_UNTRUSTED` with core’s message, and the person trusts the host once from a terminal.
 - `containers.ts`, `runtime.ts`, `capabilities.ts`: engine detection (docker/podman) and a per-container capability probe (`exec`, `findPrintf`, `statC`, missing tools, machine-readable `reason`).
 - `exec.ts`: `openChannel`, `openChannelAbortable` (a cancel during channel open destroys the channel once it opens), `runCommand`, `channelDone`.
 - `mounts.ts`: `GET .../mounts`, the container mounts from `inspect --format {{json .Mounts}}` (docker and podman shapes, cached briefly in the session and dropped with the container state). The UI badges mount destinations (patch 0022) and lists them in the Mounts window.
@@ -36,9 +36,17 @@ Extracting into a folder that already holds some of the names uses the conflict 
 
 Never interpolate values into a script. `execScriptCommand(runtime, id, script, args)` runs `sh -c <script> _ arg1 arg2 ...`: user values (paths, names) reach the script only as positional parameters (`"$1"`, `"$@"`). Every argument of the engine command is quoted by `shq` (via `engineCommand`). Scripts are constants.
 
+### Request bodies
+
+The router is created with `rawBody: true`: without it core parses the body itself and drops binary bodies, so uploads never reach the plugin. The plugin then parses JSON and form bodies itself (`express.json`, `express.urlencoded`, 2 MB). `cpUpload` (`cp-io.ts`) writes the tar to the channel itself and sends EOF a moment after the last byte, because through the plugin bridge an EOF sent right after the last write overtakes the tail of the data and `cp` reports `unexpected EOF`.
+
 ### Temporary names
 
-Single-file uploads and container copies write `.cf-part-<id8>-<name>` (`partName` in `helpers.ts`: at most 255 bytes, extension preserved, a short hash when shortened), then `mv` it into place; failures remove it. Listings hide `.cf-part-` entries. Container copy writes in place when the target name already exists (merge semantics of `cp`) and when the target has no shell.
+Single-file uploads and container copies write `.cf-part-<id8>-<name>` (`<id8>` is random per attempt, so a retried upload never meets the leftovers of the stale one) (`partName` in `helpers.ts`: at most 255 bytes, extension preserved, a short hash when shortened), then `mv` it into place; failures remove it. Listings hide `.cf-part-` entries.
+
+### Large uploads
+
+A proxy in front of Termix usually refuses a request body over 50 MB, so the browser sends a bigger file as pieces of 32 MB (`UPLOAD_CHUNK` in `containerFsApi.ts`; query `group`, `part`, `parts`; `abort=1` drops the pieces). Each piece is its own `PUT` and its own transfer id (`<id>-<part>`) and lands as a hidden `.cf-part-<group8>-<name>.<n>` file; the last piece joins them with one constant `cat` script and moves the result into place. The join needs a shell in the container. A failed or cancelled upload removes the pieces. Container copy writes in place when the target name already exists (merge semantics of `cp`) and when the target has no shell.
 
 ## Frontend (`src/frontend`)
 

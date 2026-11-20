@@ -1,7 +1,7 @@
 import React from "react";
 import { ArrowUp, File, Folder } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
-import { Input } from "@termix-ssh/plugin-sdk/ui";
+import { Input, LoadingState } from "@termix-ssh/plugin-sdk/ui";
 import { DraggableWindow } from "./vendor/file-manager/components/DraggableWindow";
 import { useWindowManager } from "./vendor/file-manager/components/WindowManager";
 import { popupTitle } from "./popup/popupTitle";
@@ -239,9 +239,7 @@ function ShellBrowser({
       />
       <div className="min-h-0 flex-1 overflow-y-auto border border-border">
         {loading && (
-          <p className="p-2 text-xs text-muted-foreground">
-            {t("containerFiles.pickerLoading")}
-          </p>
+          <LoadingState compact label={t("containerFiles.pickerLoading")} />
         )}
         {error && <p className="p-2 text-xs text-destructive">{error}</p>}
         {!loading && !error && shown.length === 0 && (

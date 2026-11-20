@@ -98,10 +98,19 @@ export function setProbeClientFactory(factory: ProbeClientFactory | null) {
   makeClient = factory ?? defaultFactory;
 }
 
-/** Whether ssh2 refused because the verifier said no. */
+/**
+ * Whether the connect was refused because the host key is new or changed.
+ * Termix 26.11 answers with code HOST_KEY_UNVERIFIED or HOST_KEY_CHANGED;
+ * older cores only say "verification failed".
+ */
 export function isHostKeyRefusal(error: unknown): boolean {
-  return (
-    error instanceof Error && /verification failed/i.test(error.message ?? "")
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: unknown }).code;
+  if (code === "HOST_KEY_UNVERIFIED" || code === "HOST_KEY_CHANGED") {
+    return true;
+  }
+  return /verification failed|key is not trusted|key has changed/i.test(
+    error.message ?? "",
   );
 }
 
@@ -201,6 +210,17 @@ class HostKeySocket {
   }
 }
 
+const SETUP_TIMEOUT_MS = 20 * 1000;
+
+/** Rejects when a setup step hangs, so the person sees the refusal and not a spinner. */
+function withTimeout<T>(work: Promise<T>, ms = SETUP_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  });
+  return Promise.race([work, limit]).finally(() => clearTimeout(timer));
+}
+
 export interface NegotiateInput {
   host: PluginSshHost;
   asker: HostKeyAsker;
@@ -208,6 +228,8 @@ export interface NegotiateInput {
   prompt?: PluginSshPromptChannel;
   log?: (level: "info" | "warning" | "error", message: string) => void;
   isAbandoned: () => boolean;
+  /** Why the probe could not run, for the error the person sees. */
+  note?: (reason: string) => void;
 }
 
 /**
@@ -223,7 +245,10 @@ export async function negotiateHostKey(
   let client: ProbeClient;
   try {
     client = await makeClient();
-  } catch {
+  } catch (error) {
+    input.note?.(
+      `ssh2 client: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return "unavailable";
   }
   client.on("error", () => {
@@ -237,31 +262,41 @@ export async function negotiateHostKey(
 
   let prepared;
   try {
-    prepared = await ctx.ssh.prepare(host, {
-      purpose: "container-files",
-      profile: "session",
-      client,
-      interactive: false,
-      hostKeySocket: socket,
-      log,
-    });
-  } catch {
+    prepared = await withTimeout(
+      ctx.ssh.prepare(host, {
+        purpose: "container-files",
+        profile: "session",
+        client,
+        interactive: false,
+        hostKeySocket: socket,
+        log,
+      }),
+    );
+  } catch (error) {
+    input.note?.(
+      `prepare: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return "unavailable";
   }
   const config = prepared.config;
   const original = config.hostVerifier;
   if (prepared.outcome.status !== "ready" || typeof original !== "function") {
+    input.note?.(
+      `prepare gave ${prepared.outcome.status}, verifier ${typeof original}`,
+    );
     return "unavailable";
   }
 
   let jumpClient: { end?: () => unknown } | null = null;
   try {
-    const transport = await ctx.ssh.openTransport(host, config, {
-      log,
-      prompt: input.prompt,
-    });
+    const transport = await withTimeout(
+      ctx.ssh.openTransport(host, config, { log, prompt: input.prompt }),
+    );
     jumpClient = (transport.jumpClient as typeof jumpClient) ?? null;
-  } catch {
+  } catch (error) {
+    input.note?.(
+      `transport: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return "unavailable";
   }
   if (input.isAbandoned()) {
@@ -287,7 +322,10 @@ export async function negotiateHostKey(
       if (abandoned) return "abandoned";
       // Core that never asked (it ignored the socket) decided on its own and
       // stored nothing: nobody answered, so there is nothing to retry.
-      if (!socket.prompted) return "unavailable";
+      if (!socket.prompted) {
+        input.note?.("core did not ask over the socket");
+        return "unavailable";
+      }
       if (accepted) return "accepted";
       return socket.timedOut || !socket.answered ? "timeout" : "rejected";
     };
@@ -329,7 +367,10 @@ export async function negotiateHostKey(
     // it, the answer still decides, because core stores an accepted key even
     // if this connection is gone.
     const failed = () => {
-      if (!verifierRan) settle("unavailable");
+      if (!verifierRan) {
+        input.note?.("the probe was dropped before the key check");
+        settle("unavailable");
+      }
     };
     client.on("error", failed);
     client.on("close", failed);

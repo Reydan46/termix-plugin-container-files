@@ -297,8 +297,12 @@ async function writeTarToLocal(sink: LocalSink, input: Readable) {
     // containment check refuses it ("would be written outside the selected
     // folder"), so it is ensured without a root. Everything below it keeps the
     // check.
-    if (dir === root.path) await fs.ensureDir(dir);
-    else await fs.ensureDir(dir, root.path);
+    if (dir === root.path) {
+      // A folder that is already there is left alone: creating it again fails
+      // on a drive root ("EPERM: mkdir 'D:\'").
+      const present = await Promise.resolve(fs.exists?.([dir])).catch(() => []);
+      if (!present?.length) await fs.ensureDir(dir);
+    } else await fs.ensureDir(dir, root.path);
     ensured.add(dir);
   };
 

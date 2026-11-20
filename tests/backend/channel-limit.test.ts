@@ -4,6 +4,7 @@ import {
   MAX_SESSION_CHANNELS,
   channelLoad,
   openChannel,
+  openTuning,
   runCommand,
 } from "../../src/backend/exec";
 import { FakeClient, type FakeStream } from "./fake-ssh";
@@ -130,7 +131,7 @@ describe("exec channel limiter", () => {
     expect(channel).toBe(fake.streams[0]);
   });
 
-  it("does not retry other errors or retry twice", async () => {
+  it("does not retry other errors and gives up on a refusal that stays", async () => {
     let calls = 0;
     const failing = (message: string) =>
       ({
@@ -142,8 +143,16 @@ describe("exec channel limiter", () => {
     await expect(openChannel(failing("Not connected"), "x")).rejects.toThrow();
     expect(calls).toBe(1);
     calls = 0;
-    await expect(openChannel(failing("open failed"), "x")).rejects.toThrow();
-    expect(calls).toBe(2);
+    const saved = { ...openTuning };
+    openTuning.retryMs = 5;
+    openTuning.giveUpMs = 40;
+    try {
+      await expect(openChannel(failing("open failed"), "x")).rejects.toThrow();
+    } finally {
+      Object.assign(openTuning, saved);
+    }
+    // Retried with a pause, then gave up with the server's own error.
+    expect(calls).toBeGreaterThan(2);
   });
 });
 

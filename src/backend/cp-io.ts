@@ -1,6 +1,6 @@
 import type { Readable } from "node:stream";
 import tar from "tar-stream";
-import { channelDone, openChannelAbortable } from "./exec.js";
+import { channelDone, killChannel, openChannelAbortable } from "./exec.js";
 import { HttpError } from "./helpers.js";
 import type { ListTarget } from "./fs-list.js";
 import { cpFromCommand, cpToCommand } from "./tar.js";
@@ -59,7 +59,7 @@ export async function cpReadFile(
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", onAbort);
-      channel.destroy();
+      killChannel(channel);
       fn();
     };
     const onAbort = () =>
@@ -116,6 +116,11 @@ export async function cpReadFile(
   });
 }
 
+/** How long to hold back the EOF after the last byte of an upload went out. */
+export function eofDelayMs(bytes: number): number {
+  return 250 + Math.min(1250, Math.floor(bytes / (1 << 20)) * 150);
+}
+
 /**
  * Streams a tar into `dir` of the container. Resolves when `cp` exits cleanly;
  * a broken or aborted source stream fails the transfer.
@@ -138,7 +143,7 @@ export async function cpUpload(
   const done = channelDone(channel, stderr);
   const onAbort = () => {
     archive.destroy();
-    channel.destroy();
+    killChannel(channel);
   };
   signal?.addEventListener("abort", onAbort, { once: true });
   // A cancel between the channel opening and this line fired no event.
@@ -146,11 +151,29 @@ export async function cpUpload(
   let sourceError: Error | undefined;
   archive.on("error", (e) => {
     sourceError = e;
-    channel.destroy();
+    killChannel(channel);
   });
   // ssh2 closes the channel only after stdout ends, so it must be drained.
   channel.resume();
-  archive.pipe(channel);
+  // Not archive.pipe(channel): it ends the channel right after the last write,
+  // and through the plugin bridge that EOF overtakes the tail of the data. The
+  // engine then reads a short archive ("unexpected EOF") on uploads of a few
+  // MB. So EOF is sent a moment after the last write; the wait grows with the
+  // amount sent because the tail in flight does.
+  let sent = 0;
+  let eofTimer: ReturnType<typeof setTimeout> | undefined;
+  archive.on("data", (chunk: Buffer) => {
+    sent += chunk.length;
+    if (!channel.write(chunk)) {
+      archive.pause();
+      channel.once("drain", () => archive.resume());
+    }
+  });
+  archive.on("end", () => {
+    eofTimer = setTimeout(() => channel.end(), eofDelayMs(sent));
+    eofTimer.unref?.();
+  });
+  channel.once("close", () => clearTimeout(eofTimer));
   try {
     await done;
   } catch {

@@ -46,7 +46,10 @@ function forwardTo(remote: TestServer): PluginFetch {
 }
 
 function desktop(pluginFetch: PluginFetch): PluginDesktopLocal {
-  return { available: () => true, pluginFetch } as PluginDesktopLocal;
+  return {
+    available: () => true,
+    pluginFetch,
+  } as unknown as PluginDesktopLocal;
 }
 
 /** A canned reply for tests that never reach a second server. */
@@ -71,7 +74,7 @@ function canned(
 async function pair() {
   const remote = await start();
   const local = await start({
-    mock: { desktopLocal: desktop(forwardTo(remote)) },
+    mock: { sandbox: false, desktopLocal: desktop(forwardTo(remote)) },
   });
   return { remote, local };
 }
@@ -255,6 +258,8 @@ describe("remote proxy", () => {
     const gate = new Promise<void>((resolve) => (release = resolve));
     const local = await start({
       mock: {
+        // The SDK mock refuses the AbortSignal and stream bodies pluginFetch takes.
+        sandbox: false,
         desktopLocal: desktop(async () =>
           canned(200, {
             headers: { "content-type": "application/x-ndjson" },
@@ -283,6 +288,8 @@ describe("remote proxy", () => {
     let seen: AbortSignal | undefined;
     const local = await start({
       mock: {
+        // The SDK mock refuses the AbortSignal and stream bodies pluginFetch takes.
+        sandbox: false,
         desktopLocal: desktop(async (_origin, _sub, init = {}) => {
           seen = init.signal;
           return canned(200, {
@@ -310,6 +317,8 @@ describe("remote proxy", () => {
     let call: { sub: string; init: FetchInit } | undefined;
     const local = await start({
       mock: {
+        // The SDK mock refuses the AbortSignal and stream bodies pluginFetch takes.
+        sandbox: false,
         desktopLocal: desktop(async (_origin, sub, init = {}) => {
           call = { sub, init };
           return canned(200);
@@ -370,6 +379,8 @@ describe("remote proxy", () => {
     it("answers 502 REMOTE_UNAVAILABLE when pluginFetch throws", async () => {
       const local = await start({
         mock: {
+          // The SDK mock refuses the AbortSignal and stream bodies pluginFetch takes.
+          sandbox: false,
           desktopLocal: desktop(async () => {
             throw new Error("ECONNREFUSED");
           }),
@@ -383,6 +394,8 @@ describe("remote proxy", () => {
     it("answers 401 REMOTE_SIGNED_OUT when the link is signed out", async () => {
       const local = await start({
         mock: {
+          // The SDK mock refuses the AbortSignal and stream bodies pluginFetch takes.
+          sandbox: false,
           desktopLocal: desktop(async () => {
             throw Object.assign(new Error("signed out"), {
               kind: "signed_out",
@@ -398,6 +411,8 @@ describe("remote proxy", () => {
     it("tags a foreign 401 and keeps our own", async () => {
       const foreign = await start({
         mock: {
+          // The SDK mock refuses the AbortSignal and stream bodies pluginFetch takes.
+          sandbox: false,
           desktopLocal: desktop(async () =>
             canned(401, { text: async () => "<html>login</html>" }),
           ),
@@ -409,6 +424,8 @@ describe("remote proxy", () => {
 
       const own = await start({
         mock: {
+          // The SDK mock refuses the AbortSignal and stream bodies pluginFetch takes.
+          sandbox: false,
           desktopLocal: desktop(async () =>
             canned(401, {
               text: async () => '{"error":"Denied","code":"DENIED"}',

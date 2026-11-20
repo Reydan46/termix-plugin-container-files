@@ -772,6 +772,12 @@ export function saveBlob(blob: Blob, fileName: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+/**
+ * Largest body sent in one request. The reverse proxy in front of Termix
+ * refuses a body over 50 MB, so a bigger file goes up in pieces.
+ */
+export const UPLOAD_CHUNK = 32 * 1024 * 1024;
+
 export async function uploadFile(
   key: string,
   dir: string,
@@ -783,29 +789,85 @@ export async function uploadFile(
     signal?: AbortSignal;
     mode?: number;
     mtime?: number;
+    /**
+     * Called before each piece starts with the id its progress is reported
+     * under and the bytes already stored. A piece has an id of its own, so the
+     * status of the one before cannot be mistaken for it.
+     */
+    onPiece?: (transferId: string, offset: number) => void;
   } = {},
 ): Promise<{ bytes: number }> {
-  const query = new URLSearchParams({
-    dir,
-    format: "file",
-    transferId: options.transferId ?? newTransferId("up"),
-  });
-  if (target.rel) query.set("rel", target.rel);
-  else query.set("name", target.name ?? "upload");
-  if (options.overwrite) query.set("overwrite", "1");
-  if (options.mode !== undefined) query.set("mode", String(options.mode));
-  if (options.mtime !== undefined) query.set("mtime", String(options.mtime));
-  const response = await getApp().fetch(
-    `${base(key)}/transfer/upload?${query}`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/octet-stream" },
-      body: file,
-      signal: options.signal,
-    },
-  );
-  if (!response.ok) throw await responseError(response);
-  return (await response.json()) as { bytes: number };
+  const transferId = options.transferId ?? newTransferId("up");
+  const send = async (
+    body: Blob,
+    id: string,
+    extra: Record<string, string>,
+    overwrite: boolean | undefined,
+  ) => {
+    const query = new URLSearchParams({ dir, format: "file", transferId: id });
+    if (target.rel) query.set("rel", target.rel);
+    else query.set("name", target.name ?? "upload");
+    if (overwrite) query.set("overwrite", "1");
+    if (options.mode !== undefined) query.set("mode", String(options.mode));
+    if (options.mtime !== undefined) query.set("mtime", String(options.mtime));
+    for (const [name, value] of Object.entries(extra)) query.set(name, value);
+    const response = await getApp().fetch(
+      `${base(key)}/transfer/upload?${query}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body,
+        signal: options.signal,
+      },
+    );
+    if (!response.ok) throw await responseError(response);
+    return (await response.json()) as { bytes: number };
+  };
+
+  if (file.size <= UPLOAD_CHUNK) {
+    options.onPiece?.(transferId, 0);
+    return send(file, transferId, {}, options.overwrite);
+  }
+  const parts = Math.ceil(file.size / UPLOAD_CHUNK);
+  const group = newTransferId("g").replace(/-/g, "").slice(0, 16);
+  let sent = 0;
+  try {
+    for (let part = 0; part < parts; part++) {
+      const id = `${transferId}-${part}`;
+      options.onPiece?.(id, sent);
+      const piece = file.slice(sent, sent + UPLOAD_CHUNK);
+      await send(
+        piece,
+        id,
+        { group, part: String(part), parts: String(parts) },
+        options.overwrite,
+      );
+      sent += piece.size;
+    }
+  } catch (error) {
+    // Pieces already stored are hidden files; ask the server to drop them.
+    if (sent > 0) {
+      await getApp()
+        .fetch(
+          `${base(key)}/transfer/upload?${new URLSearchParams({
+            dir,
+            format: "file",
+            transferId: newTransferId("up"),
+            ...(target.rel
+              ? { rel: target.rel }
+              : { name: target.name ?? "upload" }),
+            group,
+            part: String(Math.floor(sent / UPLOAD_CHUNK)),
+            parts: String(parts),
+            abort: "1",
+          })}`,
+          { method: "PUT", body: new Blob([]) },
+        )
+        .catch(() => {}); // best effort
+    }
+    throw error;
+  }
+  return { bytes: file.size };
 }
 
 export interface TransferStatus {

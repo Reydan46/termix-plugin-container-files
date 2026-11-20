@@ -1,7 +1,8 @@
 diff --git a/FileManagerContextMenu.tsx b/FileManagerContextMenu.tsx
+index fe4de47..0270d8a 100644
 --- a/FileManagerContextMenu.tsx
 +++ b/FileManagerContextMenu.tsx
-@@ -20,7 +20,6 @@
+@@ -20,7 +20,6 @@ import {
    FileArchive,
    ArrowRightLeft,
    Link,
@@ -9,7 +10,7 @@ diff --git a/FileManagerContextMenu.tsx b/FileManagerContextMenu.tsx
  } from "lucide-react";
  import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
  import { Kbd, KbdKey, KbdSeparator } from "@termix-ssh/plugin-sdk/ui";
-@@ -57,7 +56,6 @@
+@@ -58,7 +57,6 @@ interface ContextMenuProps {
    onRefresh?: () => void;
    onPaste?: () => void;
    onPreview?: (file: FileItem) => void;
@@ -17,7 +18,7 @@ diff --git a/FileManagerContextMenu.tsx b/FileManagerContextMenu.tsx
    hasClipboard?: boolean;
    onDragToDesktop?: () => void;
    onOpenTerminal?: (path: string) => void;
-@@ -111,7 +109,6 @@
+@@ -112,7 +110,6 @@ export function FileManagerContextMenu({
    onRefresh,
    onPaste,
    onPreview,
@@ -25,7 +26,7 @@ diff --git a/FileManagerContextMenu.tsx b/FileManagerContextMenu.tsx
    hasClipboard = false,
    onDragToDesktop,
    onOpenTerminal,
-@@ -267,14 +264,6 @@
+@@ -266,14 +263,6 @@ export function FileManagerContextMenu({
        });
      }
  
@@ -41,9 +42,10 @@ diff --git a/FileManagerContextMenu.tsx b/FileManagerContextMenu.tsx
        menuItems.push({
          icon: <Download className="size-3.5" />,
 diff --git a/components/FileViewer.tsx b/components/FileViewer.tsx
+index ed2558d..e9a391b 100644
 --- a/components/FileViewer.tsx
 +++ b/components/FileViewer.tsx
-@@ -17,8 +17,6 @@
+@@ -17,8 +17,6 @@ import {
    Save,
    RotateCcw,
    Keyboard,
@@ -52,7 +54,7 @@ diff --git a/components/FileViewer.tsx b/components/FileViewer.tsx
    Search,
    ZoomIn,
    ZoomOut,
-@@ -84,8 +82,6 @@
+@@ -85,8 +83,6 @@ interface FileViewerProps {
    onSave?: (content: string) => void;
    onRevert?: () => void;
    onDownload?: () => void;
@@ -61,7 +63,7 @@ diff --git a/components/FileViewer.tsx b/components/FileViewer.tsx
    onMediaDimensionsChange?: (dimensions: {
      width: number;
      height: number;
-@@ -229,8 +225,6 @@
+@@ -230,8 +226,6 @@ export function FileViewer({
    onSave,
    onRevert,
    onDownload,
@@ -70,7 +72,7 @@ diff --git a/components/FileViewer.tsx b/components/FileViewer.tsx
    onMediaDimensionsChange,
  }: FileViewerProps) {
    const { t } = useTranslation();
-@@ -474,30 +468,6 @@
+@@ -474,31 +468,6 @@ export function FileViewer({
                  {t("fileManager.download")}
                </Button>
              )}
@@ -92,6 +94,7 @@ diff --git a/components/FileViewer.tsx b/components/FileViewer.tsx
 -                    onClick={onChooseExternalEditor}
 -                    className="h-8 w-8 p-0"
 -                    title={t("fileManager.chooseExternalEditor")}
+-                    aria-label={t("fileManager.chooseExternalEditor")}
 -                  >
 -                    <Settings className="w-4 h-4" />
 -                  </Button>
@@ -102,9 +105,10 @@ diff --git a/components/FileViewer.tsx b/components/FileViewer.tsx
          </div>
        </div>
 diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
+index 6c55f53..a516700 100644
 --- a/components/FileWindow.tsx
 +++ b/components/FileWindow.tsx
-@@ -16,8 +16,6 @@
+@@ -16,8 +16,6 @@ import { toast } from "sonner";
  import { DownloadProgressToast } from "./DownloadProgressToast";
  import type { SSHHost } from "../host-types";
  import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
@@ -113,7 +117,7 @@ diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
  
  interface FileItem {
    name: string;
-@@ -89,12 +87,7 @@
+@@ -103,12 +101,7 @@ export function FileWindow({
    const [mediaDimensions, setMediaDimensions] = useState<
      { width: number; height: number } | undefined
    >();
@@ -126,7 +130,7 @@ diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
  
    const currentWindow = windows.find((w) => w.id === windowId);
  
-@@ -106,17 +99,6 @@
+@@ -120,17 +113,6 @@ export function FileWindow({
      [content],
    );
  
@@ -144,7 +148,7 @@ diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
    const ensureSSHConnection = async () => {
      const status = await getSSHStatus(sshSessionId);
  
-@@ -375,96 +357,6 @@
+@@ -391,96 +373,6 @@ export function FileWindow({
      }
    };
  
@@ -178,7 +182,7 @@ diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
 -        error?: string;
 -      }>("/local/editor/open", {
 -        fileName: file.name,
--        content: pendingContent || content,
+-        content: pendingContent ?? content,
 -        encoding: "utf8",
 -      });
 -
@@ -241,7 +245,7 @@ diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
    const handleContentChange = (newContent: string) => {
      setPendingContent(newContent);
  
-@@ -490,7 +382,6 @@
+@@ -502,7 +394,6 @@ export function FileWindow({
        if (autoSaveTimerRef.current) {
          clearTimeout(autoSaveTimerRef.current);
        }
@@ -249,7 +253,7 @@ diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
      };
    }, []);
  
-@@ -555,7 +446,6 @@
+@@ -573,7 +464,6 @@ export function FileWindow({
    };
  
    const handleClose = () => {
@@ -257,7 +261,7 @@ diff --git a/components/FileWindow.tsx b/components/FileWindow.tsx
      closeWindow(windowId);
    };
  
-@@ -608,16 +498,6 @@
+@@ -626,16 +516,6 @@ export function FileWindow({
          onContentChange={handleContentChange}
          onSave={(newContent) => handleSave(newContent)}
          onDownload={handleDownload}

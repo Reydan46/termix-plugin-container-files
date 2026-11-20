@@ -1,9 +1,11 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React from "react";
+import { Toaster } from "sonner";
 import { Box, FolderArchive, RefreshCw } from "lucide-react";
 import {
   useConnectionRetry,
   useHost,
+  useTheme,
   useTranslation,
   usePluginUiPreferences,
   type TabProps,
@@ -25,6 +27,7 @@ import {
   resolveRemoteHostId,
   useAdaptivePolling,
   useConnectionLog,
+  LoadingState,
   type GridSize,
 } from "@termix-ssh/plugin-sdk/ui";
 import {
@@ -39,7 +42,13 @@ import {
   type ContainerInfo,
   type Runtime,
 } from "./types";
-import { ContainerList, ContainerTable } from "./containers/ContainerList";
+import {
+  ContainerList,
+  ContainerSortSelect,
+  ContainerTable,
+  isContainerSort,
+  type ContainerSort,
+} from "./containers/ContainerList";
 import { ContainerWorkspace } from "./workspace/ContainerWorkspace";
 import { clearSessionLayout } from "./workspace/layout";
 import { runtimeLabel } from "./runtimeLabel";
@@ -50,6 +59,10 @@ import {
   hostKeyInfoOf,
   type HostKeyInfo,
 } from "./hostKeyPrompt";
+
+// Asking needs credentials:read, which this plugin does not take: a new or
+// changed key is reported with Termix's own words instead. Set to true to ask.
+const HOST_KEY_PROMPT = false as boolean;
 
 // Older Termix versions may not export the dialog. Without it the connect is
 // not told it can ask, and a new or changed key fails as it always did.
@@ -98,6 +111,7 @@ function ContainerFilesInner({
   const { values: prefs, set: setPref } = usePluginUiPreferences<{
     containerLayout: "card" | "table";
     containerColumns: GridSize;
+    containerSort: ContainerSort;
   }>();
 
   const liveRecord = useHost(host?.id);
@@ -125,6 +139,9 @@ function ContainerFilesInner({
   );
   const [layout, setLayout] = React.useState<"card" | "table">(
     prefs.containerLayout ?? "card",
+  );
+  const [sort, setSort] = React.useState<ContainerSort>(
+    isContainerSort(prefs.containerSort) ? prefs.containerSort : "name",
   );
   const [columns, setColumns] = React.useState<GridSize>(
     prefs.containerColumns ?? "auto",
@@ -228,6 +245,15 @@ function ContainerFilesInner({
           : logs,
       );
     }
+    if (
+      error instanceof ContainerApiError &&
+      error.code === "HOST_KEY_UNTRUSTED"
+    ) {
+      // Termix words this itself: open a terminal to the host once.
+      addLog({ type: "error", stage: "handshake", message: error.message });
+      setRetryHeld(true);
+      return;
+    }
     if (declined) {
       addLog({ type: "error", stage: "handshake", message: t(declined) });
       setRetryHeld(true);
@@ -276,7 +302,7 @@ function ContainerFilesInner({
         sid,
         plan.hostId,
         credentials,
-        !!HostKeyDialog,
+        HOST_KEY_PROMPT && !!HostKeyDialog,
       );
       applyConnectResult(sid, result, !credentials);
     } catch (error) {
@@ -676,6 +702,13 @@ function ContainerFilesInner({
               ]}
             />
             <div className="ml-auto flex items-center gap-2">
+              <ContainerSortSelect
+                value={sort}
+                onChange={(value) => {
+                  setSort(value);
+                  setPref("containerSort", value);
+                }}
+              />
               <ViewToggle
                 view={layout === "table" ? "list" : "grid"}
                 onView={(next) => {
@@ -695,12 +728,7 @@ function ContainerFilesInner({
         className="p-2.5 gap-2"
       >
         {!loadedOnce ? (
-          <div className="flex flex-col items-center justify-center h-full opacity-40 py-20">
-            <RefreshCw className="size-8 animate-spin mb-4" />
-            <span className="text-sm font-semibold">
-              {t("containers.loading")}
-            </span>
-          </div>
+          <LoadingState label={t("containers.loading")} />
         ) : layout === "table" ? (
           <ContainerTable
             sessionId={sessionId!}
@@ -709,6 +737,7 @@ function ContainerFilesInner({
             onSelectContainer={select}
             search={search}
             statusFilter={statusFilter}
+            sort={sort}
           />
         ) : (
           <ContainerList
@@ -719,6 +748,7 @@ function ContainerFilesInner({
             onSelectContainer={select}
             search={search}
             statusFilter={statusFilter}
+            sort={sort}
           />
         )}
       </PanelShell>
@@ -733,9 +763,15 @@ export function ContainerFilesTab({
   label,
   isVisible,
 }: TabProps): React.ReactElement {
+  const { theme } = useTheme();
   const record = (host ?? sshHost) as Record<string, unknown> | undefined;
   return (
     <ConnectionLogProvider>
+      {/* A frame has no toaster of the app: progress, cancel and the results
+          of copies and uploads are drawn here, once, by the visible tab. */}
+      {isVisible && (
+        <Toaster position="bottom-right" theme={theme} closeButton />
+      )}
       <ContainerFilesInner
         host={record ? toContainerHost(record) : undefined}
         rawHost={record}

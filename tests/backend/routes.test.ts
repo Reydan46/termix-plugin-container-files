@@ -267,6 +267,45 @@ describe("routes", () => {
     expect(status.body).toMatchObject({ state: "done", bytes: 5 });
   });
 
+  it("stores a chunked upload as pieces and joins them on the last one", async () => {
+    server = await startServer();
+    await connect(server);
+    server.client.reply(/'cp'/, (stream: FakeStream) => {
+      stream.write = () => true;
+      stream.end = () => stream.finish("", 0);
+    });
+    server.client.reply(/%u %g/, { stdout: "1000 1000\n" });
+    const group = "g1234567890abcde";
+    const put = (part: number, extra = "") =>
+      server.raw(
+        "PUT",
+        `${FS}/transfer/upload?dir=/data&name=big.bin&group=${group}&part=${part}&parts=2&transferId=up-chunk-${part}${extra}`,
+        { body: Buffer.from("abc") },
+      );
+    const first = await put(0);
+    expect(first.status, first.buffer.toString()).toBe(200);
+    expect(server.client.commands.some((c) => c.includes("cat --"))).toBe(
+      false,
+    );
+    const last = await put(1);
+    expect(last.status, last.buffer.toString()).toBe(200);
+    const join = server.client.commands.find((c) => c.includes("cat --"));
+    expect(join).toContain("/data/.cf-part-g1234567-big.bin.0");
+    expect(join).toContain("/data/.cf-part-g1234567-big.bin.1");
+    expect(join).toContain("'/data/big.bin'");
+  });
+
+  it("rejects a malformed chunk request", async () => {
+    server = await startServer();
+    await connect(server);
+    const r = await server.raw(
+      "PUT",
+      `${FS}/transfer/upload?dir=/data&name=big.bin&group=short&part=0&parts=2&transferId=up-chunk-9`,
+      { body: Buffer.from("abc") },
+    );
+    expect(r.status).toBe(400);
+  });
+
   it("uploads a file as a tar via a temporary name", async () => {
     server = await startServer();
     await connect(server);
@@ -302,9 +341,11 @@ describe("routes", () => {
     });
     ex.end(received);
     await new Promise<void>((resolve) => ex.on("finish", () => resolve()));
-    expect(names).toEqual([".cf-part-up-12345-up.txt:1000"]);
+    expect(names).toHaveLength(1);
+    const temp = /^(\.cf-part-[0-9a-f]{8}-up\.txt):1000$/.exec(names[0])?.[1];
+    expect(temp).toBeTruthy();
     const mv = server.client.commands.find((c) => c.includes("mv -f"));
-    expect(mv).toContain("'/data/.cf-part-up-12345-up.txt' '/data/up.txt'");
+    expect(mv).toContain(`'/data/${temp}' '/data/up.txt'`);
   });
 
   it("refuses an upload that would overwrite", async () => {

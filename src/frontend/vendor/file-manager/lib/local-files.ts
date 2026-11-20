@@ -2,7 +2,6 @@
 // the embedded backend (/local/* routes). Everything here is refused outside
 // the desktop app so callers can feature-detect cheaply.
 
-import { isElectron } from "@termix-ssh/plugin-sdk/ui";
 import { fileManagerApi } from "../api/client";
 import { getApp } from "../../../app";
 import type {
@@ -14,7 +13,8 @@ import type {
 } from "../local-types";
 
 export function isLocalFileBrowserAvailable(): boolean {
-  return isElectron();
+  // The frame has no electronAPI; the app object says whether this is the desktop.
+  return getApp().desktop.available;
 }
 
 function unwrap<T>(result: LocalFsResult<T>): T {

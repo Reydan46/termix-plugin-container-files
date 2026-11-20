@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { posix } from "node:path";
 import { Transform, type Readable } from "node:stream";
 import type { Request, Response } from "express";
@@ -5,6 +6,7 @@ import tar from "tar-stream";
 import { cpError, cpUpload } from "./cp-io.js";
 import {
   channelDone,
+  killChannel,
   openChannel,
   openChannelAbortable,
   runCommand,
@@ -33,6 +35,8 @@ export interface Transfer {
   error?: string;
   startedAt: number;
   controller: AbortController;
+  /** Random part of the temporary file name, so a replaced transfer keeps its own. */
+  part: string;
 }
 
 const MAX_TRACKED = 500;
@@ -52,7 +56,14 @@ export class TransferRegistry {
     }
     const existing = this.transfers.get(id);
     if (existing && existing.state === "running") {
-      throw new HttpError(409, "Transfer id already in use");
+      // Ids are random, so the same user sending one again is a retry of a
+      // request the browser or a proxy repeated while the first is still
+      // open. The first is stale: stop it and let the retry take over.
+      if (existing.userId !== userId) {
+        throw new HttpError(409, "Transfer id already in use");
+      }
+      existing.state = "cancelled";
+      existing.controller.abort();
     }
     if (this.transfers.size >= MAX_TRACKED) {
       for (const [key, value] of this.transfers) {
@@ -69,6 +80,7 @@ export class TransferRegistry {
       state: "running",
       startedAt: Date.now(),
       controller: new AbortController(),
+      part: randomBytes(4).toString("hex"),
     };
     this.transfers.set(id, transfer);
     return transfer;
@@ -136,7 +148,7 @@ export async function download(
   const done = channelDone(channel, stderr);
   done.catch(() => {}); // the stream's own error path reports it; this only avoids an unhandled rejection
   const onAbort = () => {
-    channel.destroy();
+    killChannel(channel);
     if (!res.writableEnded) res.destroy();
   };
   signal.addEventListener("abort", onAbort, { once: true });
@@ -152,7 +164,7 @@ export async function download(
     }
   } finally {
     signal.removeEventListener("abort", onAbort);
-    channel.destroy();
+    killChannel(channel);
   }
 }
 
@@ -288,6 +300,8 @@ export interface UploadParams {
   mtime?: Date;
   /** Byte count to use when the request carries no Content-Length. */
   size?: number;
+  /** One piece of a file sent in several requests (a proxy limits one body). */
+  chunk?: { group: string; part: number; parts: number; abort: boolean };
 }
 
 /** Looks up uid/gid of a directory so uploads belong to the same owner. */
@@ -322,6 +336,7 @@ export async function upload(
   res.on("close", () => {
     if (!res.writableFinished) transfer.controller.abort();
   });
+  if (params.chunk) return uploadChunk(t, transfer, req, params);
   const owner = await directoryOwner(t, params.dir, signal);
 
   const counter = new Transform({
@@ -331,7 +346,11 @@ export async function upload(
     },
   });
   req.on("error", (e) => counter.destroy(e));
-  req.on("aborted", () => transfer.controller.abort());
+  // A request whose body was read in full is destroyed afterwards and also
+  // says "aborted" (the sandbox never marks it complete); that is no abort.
+  req.on("aborted", () => {
+    if (!req.readableEnded) transfer.controller.abort();
+  });
   req.pipe(counter);
 
   if (params.format === "tar") {
@@ -365,7 +384,10 @@ export async function upload(
     if (check.code !== 0) throw errorFromResult(check);
   }
   const tempRel = useTemp
-    ? posix.join(posix.dirname(rel), partName(transfer.id, posix.basename(rel)))
+    ? posix.join(
+        posix.dirname(rel),
+        partName(transfer.part, posix.basename(rel)),
+      )
     : rel;
   const tempPath = posix.join(params.dir, tempRel);
 
@@ -389,6 +411,152 @@ export async function upload(
     throw error;
   }
   return { bytes: size };
+}
+
+const MAX_CHUNKS = 4096;
+
+/** Name of piece `part` of a chunked upload, next to the final file. */
+function chunkName(rel: string, group: string, part: number): string {
+  return posix.join(
+    posix.dirname(rel),
+    partName(group, `${posix.basename(rel)}.${part}`),
+  );
+}
+
+/**
+ * One piece of a file too big for one request. Pieces are stored next to the
+ * target as hidden files; the last one joins them and moves the result into
+ * place. Needs a shell in the container.
+ */
+async function uploadChunk(
+  t: ListTarget,
+  transfer: Transfer,
+  req: Request,
+  params: UploadParams,
+): Promise<{ bytes: number }> {
+  const chunk = params.chunk!;
+  const { signal } = transfer.controller;
+  const { group, part, parts } = chunk;
+  if (
+    !ID_RE.test(group) ||
+    !Number.isInteger(part) ||
+    !Number.isInteger(parts) ||
+    parts < 2 ||
+    parts > MAX_CHUNKS ||
+    part < 0 ||
+    part >= parts
+  ) {
+    throw new HttpError(400, "Invalid chunk", "BAD_CHUNK");
+  }
+  if (!t.capabilities.exec) {
+    throw new HttpError(
+      400,
+      "A large upload needs a shell in the container",
+      "NO_EXEC",
+    );
+  }
+  const rel = params.rel ? safeRelative(params.rel) : safeName(params.name);
+  const finalPath = posix.join(params.dir, rel);
+  const pieces = (upTo: number) =>
+    Array.from({ length: upTo }, (_, k) =>
+      posix.join(params.dir, chunkName(rel, group, k)),
+    );
+  const removePieces = async (upTo: number) => {
+    if (upTo <= 0) return;
+    await runCommand(
+      t.client,
+      execScriptCommand(
+        t.runtime,
+        t.containerId,
+        `rm -f -- "$@"`,
+        pieces(upTo),
+      ),
+      { timeoutMs: 30_000 },
+    ).catch(() => {}); // best effort: a leftover piece is hidden and harmless
+  };
+  if (chunk.abort) {
+    req.resume();
+    await removePieces(part);
+    return { bytes: 0 };
+  }
+
+  const declared = Number(req.headers["content-length"]);
+  if (!Number.isFinite(declared) || declared < 0) {
+    throw new HttpError(411, "Content-Length is required", "LENGTH_REQUIRED");
+  }
+  transfer.total = declared;
+  if (part === 0 && !params.overwrite) {
+    const check = await runCommand(
+      t.client,
+      execScriptCommand(
+        t.runtime,
+        t.containerId,
+        `if [ -e "$1" ] || [ -L "$1" ]; then exit ${EXIT_EXISTS}; fi`,
+        [finalPath],
+      ),
+      { signal, timeoutMs: 15_000 },
+    );
+    if (check.code !== 0) throw errorFromResult(check);
+  }
+  const owner = await directoryOwner(t, params.dir, signal);
+  const counter = new Transform({
+    transform(data: Buffer, _enc, cb) {
+      transfer.bytes += data.length;
+      cb(null, data);
+    },
+  });
+  req.on("error", (e) => counter.destroy(e));
+  // A request whose body was read in full is destroyed afterwards and also
+  // says "aborted" (the sandbox never marks it complete); that is no abort.
+  req.on("aborted", () => {
+    if (!req.readableEnded) transfer.controller.abort();
+  });
+  req.pipe(counter);
+  try {
+    await cpUpload(
+      t,
+      params.dir,
+      packSingleFile(
+        chunkName(rel, group, part),
+        declared,
+        counter as Readable,
+        {
+          mode: params.mode,
+          mtime: params.mtime,
+          owner,
+        },
+      ),
+      signal,
+    );
+    if (transfer.bytes !== declared) {
+      throw new HttpError(400, "Upload size mismatch", "SIZE_MISMATCH");
+    }
+    if (part === parts - 1) {
+      const joined = posix.join(
+        params.dir,
+        posix.dirname(rel),
+        partName(group, posix.basename(rel)),
+      );
+      const done = await runCommand(
+        t.client,
+        execScriptCommand(
+          t.runtime,
+          t.containerId,
+          `tmp="$1"; final="$2"; over="$3"; shift 3; : > "$tmp" || exit 1; for p in "$@"; do cat -- "$p" >> "$tmp" || { rm -f -- "$tmp"; exit 1; }; done; rm -f -- "$@"; if [ "$over" = 1 ] && [ -d "$final" ] && [ ! -L "$final" ]; then rm -rf -- "$final"; fi; mv -f -- "$tmp" "$final"`,
+          [joined, finalPath, params.overwrite ? "1" : "0", ...pieces(parts)],
+        ),
+        { timeoutMs: 600_000 },
+      );
+      if (done.code !== 0) {
+        await removeTemp(t, joined);
+        throw errorFromResult(done);
+      }
+    }
+  } catch (error) {
+    await removePieces(part + 1);
+    throw error;
+  }
+  return { bytes: declared };
 }
 
 /** Renames a finished temporary upload onto its final path. */

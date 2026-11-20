@@ -1,7 +1,16 @@
 import React from "react";
 import { Box } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
-import { Card, DataView, type GridSize } from "@termix-ssh/plugin-sdk/ui";
+import {
+  Card,
+  DataView,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  type GridSize,
+} from "@termix-ssh/plugin-sdk/ui";
 import { containerName, type ContainerInfo } from "../types";
 import type { ContainerLiveState } from "../containerFsApi";
 import { ContainerActions } from "./ContainerActions";
@@ -43,6 +52,66 @@ export function filterContainers(
   );
 }
 
+export const CONTAINER_SORTS = ["name", "nameDesc", "state", "image"] as const;
+export type ContainerSort = (typeof CONTAINER_SORTS)[number];
+
+export function isContainerSort(value: unknown): value is ContainerSort {
+  return (CONTAINER_SORTS as readonly unknown[]).includes(value);
+}
+
+/** A sorted copy; ties fall back to the name so the order is stable. */
+export function sortContainers(
+  containers: ContainerInfo[],
+  sort: ContainerSort,
+): ContainerInfo[] {
+  const byName = (a: ContainerInfo, b: ContainerInfo) =>
+    containerName(a).localeCompare(containerName(b), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+  const key = (c: ContainerInfo) =>
+    sort === "state" ? c.state : sort === "image" ? c.image : "";
+  return [...containers].sort((a, b) => {
+    if (sort === "nameDesc") return byName(b, a);
+    if (sort === "name") return byName(a, b);
+    return key(a).localeCompare(key(b)) || byName(a, b);
+  });
+}
+
+/** A select for the sort order, shared by the tab and the pane picker. */
+export function ContainerSortSelect({
+  value,
+  onChange,
+}: {
+  value: ContainerSort;
+  onChange: (value: ContainerSort) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <Select
+      value={value}
+      onValueChange={(next) => {
+        if (isContainerSort(next)) onChange(next);
+      }}
+    >
+      <SelectTrigger
+        aria-label={t("containers.sortBy")}
+        title={t("containers.sortBy")}
+        className="h-7 w-auto gap-1 rounded-none px-1.5 text-xs"
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {CONTAINER_SORTS.map((s) => (
+          <SelectItem key={s} value={s}>
+            {t(`containers.sort.${s}`)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 function splitPorts(ports: string): string[] {
   return (ports ?? "")
     .split(",")
@@ -68,17 +137,18 @@ interface ListProps {
   onSelectContainer: (containerId: string) => void;
   search?: string;
   statusFilter?: string;
+  sort?: ContainerSort;
   sessionId: string;
   /** An action finished (state given) or failed (null): refresh that row. */
   onChanged: (id: string, state: ContainerLiveState | null) => void;
 }
 
 function useFiltered(props: ListProps) {
-  const { containers, search = "", statusFilter = "all" } = props;
-  return React.useMemo(
-    () => filterContainers(containers, search, statusFilter),
-    [containers, search, statusFilter],
-  );
+  const { containers, search = "", statusFilter = "all", sort } = props;
+  return React.useMemo(() => {
+    const found = filterContainers(containers, search, statusFilter);
+    return sort ? sortContainers(found, sort) : found;
+  }, [containers, search, statusFilter, sort]);
 }
 
 function useEmpty(props: ListProps, filteredCount: number) {

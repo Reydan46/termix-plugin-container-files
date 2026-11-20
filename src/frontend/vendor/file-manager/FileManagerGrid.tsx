@@ -9,11 +9,10 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { cn } from "@termix-ssh/plugin-sdk/ui";
+import { cn, LoadingState } from "@termix-ssh/plugin-sdk/ui";
 import { dialogOwnsKey } from "../../popup/keyGuard";
-import { isActivePane, PANE_ATTR } from "../../paneFocus";
-import { layoutKey } from "../../layoutKey";
 import { MOUNT_ICON_CLASS, MountLetters } from "../../MountLetters";
+import { isActivePane, PANE_ATTR } from "../../paneFocus";
 import {
   Folder,
   File,
@@ -33,7 +32,6 @@ import {
   Move,
   Ban,
   GitCompare,
-  Loader2,
 } from "lucide-react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import type { FileItem } from "./host-types";
@@ -50,6 +48,7 @@ import {
 } from "./hooks/useResizableColumns.ts";
 import { ColumnResizeHandle } from "./components/ColumnResizeHandle.tsx";
 import { ColumnVisibilityMenu } from "./components/ColumnVisibilityMenu.tsx";
+import { shortcutKey } from "./lib/shortcut-key";
 
 // Fixed list-view columns after the flexible name column; user-resizable.
 const LIST_COLUMNS: ResizableColumnSpec[] = [
@@ -100,8 +99,12 @@ interface MountMark {
 
 interface FileManagerGridProps {
   files: FileItem[];
+  /** Extra status drawn in the footer, between the item and selection counts. */
+  footerStatus?: React.ReactNode;
   /** Show a spinner instead of the empty-folder text while a listing is in flight. */
   isLoading?: boolean;
+  /** Active name filter; when it leaves nothing to show, the empty state names it. */
+  searchQuery?: string;
   selectedFiles: FileItem[];
   /** Paths being moved to the trash: shown dimmed and not interactive. */
   deletingPaths?: ReadonlySet<string>;
@@ -124,7 +127,8 @@ interface FileManagerGridProps {
   editingFile?: FileItem | null;
   onStartEdit?: (file: FileItem) => void;
   onCancelEdit?: () => void;
-  onDelete?: (files: FileItem[]) => void;
+  /** Shift+Delete asks for `permanent`, skipping the trash. */
+  onDelete?: (files: FileItem[], options?: { permanent?: boolean }) => void;
   onCopy?: (files: FileItem[]) => void;
   onCut?: (files: FileItem[]) => void;
   onPaste?: () => void;
@@ -132,6 +136,7 @@ interface FileManagerGridProps {
   onFileDrop?: (draggedFiles: FileItem[], targetFile: FileItem) => void;
   onFileDiff?: (file1: FileItem, file2: FileItem) => void;
   onSystemDragStart?: (files: FileItem[]) => void;
+  onSystemPrefetch?: (files: FileItem[]) => void;
   onSystemDragEnd?: (e: DragEvent, files: FileItem[]) => void;
   hasClipboard?: boolean;
   createIntent?: CreateIntent | null;
@@ -279,7 +284,9 @@ const getBaseFileIcon = (
 
 export function FileManagerGrid({
   files,
+  footerStatus,
   isLoading,
+  searchQuery,
   selectedFiles,
   deletingPaths,
   onFileOpen,
@@ -307,6 +314,8 @@ export function FileManagerGrid({
   onFileDrop,
   onFileDiff,
   onSystemDragEnd,
+  onSystemPrefetch,
+  onSystemDragStart,
   hasClipboard,
   createIntent,
   onConfirmCreate,
@@ -560,6 +569,12 @@ export function FileManagerGrid({
       e.dataTransfer,
       filesToDrag.map((f) => f.path),
     );
+    onSystemDragStart?.(filesToDrag);
+  };
+
+  const prefetchFor = (file: FileItem) => {
+    if (!onSystemPrefetch) return;
+    onSystemPrefetch(selectedFiles.includes(file) ? selectedFiles : [file]);
   };
 
   const handleFileDragOver = (e: React.DragEvent, targetFile: FileItem) => {
@@ -696,6 +711,33 @@ export function FileManagerGrid({
     },
     [dragState.type],
   );
+
+  // A cancelled drag (Escape, drop elsewhere) can skip dragleave and leave the overlay up.
+  const outsideDragActive =
+    dragState.type === "external" || dragState.type === "local";
+  useEffect(() => {
+    if (!outsideDragActive) return;
+    const reset = () => setDragState({ type: "none", files: [], counter: 0 });
+    let idle = setTimeout(reset, 1500);
+    const alive = () => {
+      clearTimeout(idle);
+      idle = setTimeout(reset, 1500);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") reset();
+    };
+    window.addEventListener("dragover", alive, true);
+    window.addEventListener("dragend", reset, true);
+    window.addEventListener("drop", reset, true);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      clearTimeout(idle);
+      window.removeEventListener("dragover", alive, true);
+      window.removeEventListener("dragend", reset, true);
+      window.removeEventListener("drop", reset, true);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [outsideDragActive]);
 
   const handleDragLeave = useCallback(
     (e: React.DragEvent) => {
@@ -1042,6 +1084,16 @@ export function FileManagerGrid({
     [onUpload, onUploadItems, onLocalFilesDrop, dragState],
   );
 
+  const sortKeyDown = (
+    e: React.KeyboardEvent,
+    field: "name" | "modified" | "size",
+  ) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    e.stopPropagation();
+    onSortChange?.(field);
+  };
+
   const handleFileClick = (file: FileItem, event: React.MouseEvent) => {
     event.stopPropagation();
 
@@ -1127,8 +1179,7 @@ export function FileManagerGrid({
         return;
       }
 
-      // Ctrl/Cmd shortcuts also work on a non-Latin layout (physical key).
-      switch (layoutKey(event)) {
+      switch (shortcutKey(event)) {
         case "Escape":
           onSelectionChange([]);
           break;
@@ -1213,7 +1264,7 @@ export function FileManagerGrid({
           break;
         case "Delete":
           if (selectedFiles.length > 0 && onDelete) {
-            onDelete(selectedFiles);
+            onDelete(selectedFiles, { permanent: event.shiftKey });
           }
           break;
         case "F2":
@@ -1251,6 +1302,14 @@ export function FileManagerGrid({
     onCut,
     onPaste,
     onUndo,
+    onDownload,
+    onNewFile,
+    onNewFolder,
+    onUpload,
+    onStartEdit,
+    onFileOpen,
+    hasClipboard,
+    deletingPaths,
   ]);
 
   // Pinned ".." entry (Termius-style). Behaves as a directory drop target
@@ -1359,12 +1418,18 @@ export function FileManagerGrid({
               {viewMode === "grid" ? parentGridStrip : parentListRow}
               <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground select-none pointer-events-none">
                 {isLoading ? (
-                  <Loader2 className="size-6 animate-spin text-muted-foreground/60" />
+                  <LoadingState label={t("common.loading")} />
                 ) : (
                   <>
                     <Folder className="size-8 text-muted-foreground/30" />
                     <span className="text-xs">
-                      {t("fileManager.emptyFolder")}
+                      {searchQuery
+                        ? t("fileManager.noSearchResults", {
+                            query: searchQuery,
+                            // React already escapes the text.
+                            interpolation: { escapeValue: false },
+                          })
+                        : t("fileManager.emptyFolder")}
                     </span>
                   </>
                 )}
@@ -1431,6 +1496,7 @@ export function FileManagerGrid({
                                   "opacity-40 pointer-events-none",
                               )}
                               title={file.name}
+                              onMouseDown={() => prefetchFor(file)}
                               onClick={(e) => handleFileClick(file, e)}
                               onMouseEnter={() =>
                                 file.type === "directory" &&
@@ -1532,7 +1598,10 @@ export function FileManagerGrid({
               >
                 <div
                   className="flex items-center gap-1 cursor-pointer hover:text-accent-brand transition-colors min-w-0"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => onSortChange?.("name")}
+                  onKeyDown={(e) => sortKeyDown(e, "name")}
                 >
                   {t("fileManager.name")}
                   {sortBy === "name" &&
@@ -1545,7 +1614,10 @@ export function FileManagerGrid({
                 {listColumns.isVisible("modified") && (
                   <div
                     className="relative flex items-center gap-1 cursor-pointer hover:text-accent-brand transition-colors min-w-0"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => onSortChange?.("modified")}
+                    onKeyDown={(e) => sortKeyDown(e, "modified")}
                   >
                     <ColumnResizeHandle
                       {...listColumns.getHandleProps("modified")}
@@ -1572,7 +1644,10 @@ export function FileManagerGrid({
                 {listColumns.isVisible("size") && (
                   <div
                     className="relative flex items-center gap-1 cursor-pointer hover:text-accent-brand transition-colors justify-end min-w-0"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => onSortChange?.("size")}
+                    onKeyDown={(e) => sortKeyDown(e, "size")}
                   >
                     <ColumnResizeHandle
                       {...listColumns.getHandleProps("size")}
@@ -1651,6 +1726,7 @@ export function FileManagerGrid({
                           deletingPaths?.has(file.path) &&
                             "opacity-40 pointer-events-none",
                         )}
+                        onMouseDown={() => prefetchFor(file)}
                         onClick={(e) => handleFileClick(file, e)}
                         onMouseEnter={() =>
                           file.type === "directory" && onDirectoryHover?.(file)
@@ -1754,7 +1830,7 @@ export function FileManagerGrid({
               {files.length === 0 && !createIntent && (
                 <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground select-none pointer-events-none">
                   {isLoading ? (
-                    <Loader2 className="size-6 animate-spin text-muted-foreground/60" />
+                    <LoadingState label={t("common.loading")} />
                   ) : (
                     <>
                       <Folder className="size-8 text-muted-foreground/30" />
@@ -1801,9 +1877,10 @@ export function FileManagerGrid({
       </div>
 
       <div className="px-3 py-1 border-t border-border flex items-center justify-between text-[10px] text-muted-foreground shrink-0">
-        <span>
+        <span className="shrink-0">
           {files.length} {t("fileManager.items")}
         </span>
+        {footerStatus}
         {selectedFiles.length > 0 && (
           <span className="text-accent-brand">
             {selectedFiles.length} {t("fileManager.selected")}

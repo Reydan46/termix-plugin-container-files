@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark as syntaxTheme } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { shortcutKey } from "../lib/shortcut-key";
 
 interface MarkdownRendererProps {
   content: string;
@@ -38,8 +39,8 @@ export function MarkdownRenderer({
     ? "mb-3 overflow-x-auto thin-scrollbar"
     : "mb-4 overflow-x-auto thin-scrollbar";
   const tableClass = compact
-    ? "min-w-full border border-border rounded-lg text-sm"
-    : "min-w-full border border-border rounded-lg";
+    ? "min-w-full border border-border text-sm"
+    : "min-w-full border border-border";
   const thClass = compact
     ? "px-3 py-2 text-left font-semibold text-foreground"
     : "px-4 py-2 text-left font-semibold text-foreground";
@@ -53,14 +54,17 @@ export function MarkdownRenderer({
       tabIndex={0}
       onKeyDown={(event) => {
         // Keep native text copying out of the file grid's global shortcuts.
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c")
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          shortcutKey(event).toLowerCase() === "c"
+        )
           event.stopPropagation();
       }}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          code({ className, children, ...props }) {
+          code({ className, children, node: _node, ...props }) {
             const match = /language-(\w+)/.exec(className || "");
             // v9 removed the `inline` flag; a fenced block always carries a
             // language- class, an inline span never does.
@@ -70,7 +74,6 @@ export function MarkdownRenderer({
                 style={syntaxTheme}
                 language={match[1]}
                 PreTag="div"
-                className="rounded-lg"
                 {...props}
               >
                 {String(children).replace(/\n$/, "")}

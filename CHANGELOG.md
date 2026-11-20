@@ -1,8 +1,36 @@
 # Changelog
 
+## 1.1.0
+
+### Changed
+
+- Needs Termix 26.11.2 or newer (plugin API 2): the backend runs in a sandboxed process and the interface in frames. Older Termix versions keep using 1.0.5.
+- A host whose key Termix does not trust yet fails once with Termix's own message (open a terminal to the host once) instead of retrying.
+- The local files item is only in the Add panel menu and is disabled while that panel is open.
+
+### Added
+
+- The container list can be sorted by name, state or image, and the choice is remembered. The picker in the Add panel menu has a name filter and the same sort.
+- `GET /plugin-api/container-files/diagnostics` shows how the recent cleanups of cancelled host processes ended.
+
+### Fixed
+
+- Cancelling or failing a copy, upload or download ends the `docker cp` it started on the host. Before, it kept running and after a few cancels every container failed with "Channel open failure". Cancelling an upload no longer stops the whole plugin process either.
+- Uploads work again: they reach the plugin (before, progress stayed at zero and later commands ended in "Command timed out"), a finished upload is no longer cancelled, and a file of about 5 MB or more no longer fails with "unexpected EOF".
+- Files over 50 MB upload in pieces of 32 MB (the proxy in front of Termix refuses bigger requests), joined in the container, which needs a shell there. Progress counts the whole file.
+- An upload sent again by the browser or a proxy no longer fails with "Transfer id already in use".
+- Host actions (for example opening a terminal) stay hidden until the permission is known, and the focus ring in dialogs follows the Termix theme.
+- PDF preview works in a frame and shows the reason when a PDF still fails.
+- Progress, cancel and results of copies, uploads and archives show inside the tab again; downloads no longer try the file picker, which a frame may not open.
+
 ## 1.0.5
 
 ### Fixed
+
+- A cancelled copy no longer leaves SSH channels behind: the remote command is stopped, and a refused channel ("open failed") is retried with backoff while the plugin keeps below the limit the server showed.
+- PDF preview works in a frame: the pdf.js worker runs on the main thread.
+- Downloading into a drive root (for example `D:`) no longer fails with `EPERM: mkdir`.
+- "Pane" is called "panel" in the English texts.
 
 - Document and window listeners (pane focus, pointer tracking, window focus, page unload) are now attached when the plugin is enabled and removed when it is disabled, instead of at module load.
 - The temporary copy made by Copy is removed, and its exit handler detached, when the plugin is disabled.
@@ -31,7 +59,7 @@
 
 ### Changed
 
-- The file manager follows Plugin-File-Manager 1.1.3: fixed row height in the list, a loading spinner for an empty folder and selection highlight in the editor.
+- The bundled file manager follows Plugin-File-Manager 1.2.2 (layout-independent shortcuts, localized messages, loading states) with our patches rebased onto it.
 
 ### Fixed
 

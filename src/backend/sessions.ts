@@ -60,6 +60,11 @@ export function createSessions(
   const sessions = new Map<string, ContainerSession>();
   const pending = new Map<string, PendingEntry>();
 
+  // The sweep job only has work while something is pending; tell Termix so
+  // the plugin process can stop when idle.
+  const syncAwake = () => schedule.keepAwake?.("pending", pending.size > 0);
+  syncAwake();
+
   const end = (session: ContainerSession) => {
     session.cancelIdle?.();
     sessions.delete(session.id);
@@ -79,14 +84,19 @@ export function createSessions(
     });
   };
 
-  schedule.every(PENDING_SWEEP_MS, () => {
-    const now = Date.now();
-    for (const [id, entry] of pending) {
-      if (now < entry.expiresAt) continue;
-      pending.delete(id);
-      entry.cancel();
-    }
-  });
+  schedule.every(
+    PENDING_SWEEP_MS,
+    () => {
+      const now = Date.now();
+      for (const [id, entry] of pending) {
+        if (now < entry.expiresAt) continue;
+        pending.delete(id);
+        entry.cancel();
+      }
+      syncAwake();
+    },
+    { id: "pending-sweep" },
+  );
 
   return {
     add: (session) => {
@@ -115,6 +125,7 @@ export function createSessions(
         pending.delete(id);
         entry.cancel();
       }
+      syncAwake();
     },
 
     touch: (session) => {
@@ -136,18 +147,21 @@ export function createSessions(
       const existing = pending.get(id);
       if (existing) existing.cancel();
       pending.set(id, entry);
+      syncAwake();
     },
 
     getPending: (id) => pending.get(id),
 
     clearPending: (id) => {
       pending.delete(id);
+      syncAwake();
     },
 
     closeAll: () => {
       for (const session of [...sessions.values()]) end(session);
       for (const entry of pending.values()) entry.cancel();
       pending.clear();
+      syncAwake();
     },
   };
 }

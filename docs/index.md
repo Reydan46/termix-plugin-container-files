@@ -13,7 +13,7 @@ Using the tab needs the Use Container Files permission, which admins and users g
 ## Use it
 
 - Double-click a folder to open it. Right-click for the actions: new file or folder, rename, copy, cut, paste, delete, permissions, symlink, compress, extract.
-- Drag files from your computer into the window to upload. Use Download in the menu to save files or folders.
+- Drag files from your computer into the window to upload. Files over 50 MB go up in pieces, which needs a shell in the container. Use Download in the menu to save files or folders.
 - Add more containers with the plus button. Panes tile the window; drag a pane by its header to move or swap it.
 - The Mounts button lists the container's mounts (type, source, read-write or read-only). Mount folders carry an RW or RO letter in their icon.
 - To add files to an archive, choose Add to archive in the menu or drop files on the archive (or on its open window). It works for zip, 7z, tar, tar.gz, tar.bz2, tar.xz and tar.zst and needs GNU tar, zip, 7z, gzip, bzip2, xz or zstd in the container to match; if it cannot, the reason is shown while you drag.

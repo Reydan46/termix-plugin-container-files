@@ -1,0 +1,21 @@
+Run the pdf.js worker code on the main thread: a plugin frame has an opaque
+origin and cannot start a worker from its assets.
+diff --git a/components/PdfPreview.tsx b/components/PdfPreview.tsx
+index ab1bbfb..e4eeba9 100644
+--- a/components/PdfPreview.tsx
++++ b/components/PdfPreview.tsx
+@@ -4,9 +4,12 @@ import { AlertCircle, Download } from "lucide-react";
+ import { Button, LoadingState } from "@termix-ssh/plugin-sdk/ui";
+ import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+ import { mediaSource } from "../api/ssh-file-operations-api";
+-import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
++import * as pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs";
+ 
+-pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
++// A plugin frame has an opaque origin and cannot start a worker from its own
++// assets, so pdf.js runs its worker code on the main thread instead.
++(globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = pdfjsWorker;
++void pdfjs;
+ 
+ interface PdfPreviewProps {
+   content: string;

@@ -17,7 +17,7 @@ diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
 +              {files.length === 0 && !createIntent && (
 +                <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground select-none pointer-events-none">
 +                  {isLoading ? (
-+                    <Loader2 className="size-6 animate-spin text-muted-foreground/60" />
++                    <LoadingState label={t("common.loading")} />
 +                  ) : (
 +                    <>
 +                      <Folder className="size-8 text-muted-foreground/30" />

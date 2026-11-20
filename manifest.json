@@ -1,7 +1,7 @@
 {
   "id": "container-files",
   "name": "Container Files",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "Browse, edit and transfer files in Docker and Podman containers over SSH.",
   "author": {
     "name": "Reydan46",
@@ -21,8 +21,8 @@
     "Works with stopped and minimal containers where the engine allows it"
   ],
   "engine": {
-    "termix": ">=26.10.3",
-    "api": "^1.9"
+    "termix": ">=26.11.2",
+    "api": "^2.0.0"
   },
   "capabilities": [
     "hosts:read",
@@ -30,6 +30,7 @@
     "ssh:connect",
     "network:serve",
     "ui:surface",
+    "files:own",
     "desktop:local"
   ],
   "contributes": {
@@ -70,6 +71,9 @@
         }
       ]
     }
+  },
+  "sandbox": {
+    "schedules": [{ "id": "pending-sweep", "every": 60000 }]
   },
   "locales": "locales",
   "platforms": ["linux", "win32", "darwin"]

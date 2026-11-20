@@ -75,7 +75,11 @@ export function createRemoteProxy(ctx: PluginContext): RequestHandler {
     res.on("close", () => {
       if (!res.writableFinished) controller.abort();
     });
-    req.on("aborted", () => controller.abort());
+    // A request whose body was read in full is destroyed afterwards and also
+    // says "aborted" (the sandbox never marks it complete); that is no abort.
+    req.on("aborted", () => {
+      if (!req.readableEnded) controller.abort();
+    });
 
     const headers: Record<string, string> = {};
     for (const name of REQUEST_HEADERS) {

@@ -124,6 +124,7 @@ function setup(
     state.prepared += 1;
     return {
       config: {
+        host: "10.0.0.7",
         hostVerifier: coreVerifier(
           options.hostKeySocket as never,
           scenario,
@@ -186,6 +187,30 @@ describe("host key prompt", () => {
 
     const list = await server.request("GET", "/containers/s1");
     expect(list.status).toBe(200);
+  });
+
+  it("recognizes the refusal core 26.11 reports by code", async () => {
+    server = await startServer();
+    const state = setup(server, "new");
+    const ssh = server.mock.ctx.ssh;
+    const realConnect = ssh.connect;
+    ssh.connect = (async (...args: Parameters<typeof realConnect>) => {
+      if (!state.store.stored) {
+        throw Object.assign(
+          new Error(
+            "This host's key is not trusted yet. Open a terminal to the host once to check and trust it.",
+          ),
+          { code: "HOST_KEY_UNVERIFIED" },
+        );
+      }
+      return realConnect(...args);
+    }) as typeof ssh.connect;
+
+    const first = await connect(server);
+    expect(first.body.requires_host_key).toBe(true);
+    const done = await answer(server, "accept");
+    expect(done.status).toBe(200);
+    expect(state.store.stored).toBe(true);
   });
 
   it("fails clearly when a new key is rejected", async () => {
@@ -274,14 +299,15 @@ describe("host key prompt", () => {
     expect((await answer(server, "accept")).status).toBe(404);
   });
 
-  it("keeps today's error for a client that cannot show the dialog", async () => {
+  it("tells a client that cannot show the dialog to trust the host first", async () => {
     server = await startServer();
     const state = setup(server, "new");
 
     const res = await connect(server, false);
 
-    expect(res.status).toBe(500);
-    expect(res.body.message).toMatch(/verification failed/);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("HOST_KEY_UNTRUSTED");
+    expect(res.body.error).toMatch(/verification failed/);
     expect(res.body.requires_host_key).toBeUndefined();
     expect(state.prepared).toBe(0);
   });

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -27,6 +27,9 @@ function fakeLocal(
   const local = {
     available: () => true,
     info: async () => ({ platform }),
+    fs: {
+      exists: async (paths: string[]) => paths.filter((p) => existsSync(p)),
+    },
     pty: {
       spawn: async () => {
         if (opts.spawnFails) throw new Error(opts.spawnFails);

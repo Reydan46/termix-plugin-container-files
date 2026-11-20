@@ -12,7 +12,7 @@ import {
   statPath,
 } from "../../src/backend/fs-ops";
 import { readTextFile, writeTextFile } from "../../src/backend/fs-read-write";
-import { cpReadFile, cpUpload } from "../../src/backend/cp-io";
+import { cpReadFile, cpUpload, eofDelayMs } from "../../src/backend/cp-io";
 import { packSingleFile, sanitizeTar } from "../../src/backend/tar";
 import { TransferRegistry, download } from "../../src/backend/transfers";
 import type { ListTarget } from "../../src/backend/fs-list";
@@ -409,6 +409,37 @@ describe("cp io", () => {
       gid: 6,
       mode: 0o600,
     });
+  });
+
+  it("holds the EOF back until the tail of the archive had time to arrive", async () => {
+    let endedAt = 0;
+    let lastWriteAt = 0;
+    const client = new FakeClient([
+      [
+        /'cp'/,
+        (s) => {
+          const write = s.write.bind(s);
+          s.write = (d: Buffer | string) => {
+            lastWriteAt = Date.now();
+            return write(d);
+          };
+          s.end = () => {
+            endedAt = Date.now();
+            s.finish("", 0);
+          };
+        },
+      ],
+    ]);
+    const body = new PassThrough();
+    body.end(Buffer.alloc(100_000, 1));
+    await cpUpload(target(client), "/d", packSingleFile("a", 100_000, body));
+    expect(lastWriteAt).toBeGreaterThan(0);
+    expect(endedAt - lastWriteAt).toBeGreaterThanOrEqual(eofDelayMs(0) - 20);
+  });
+
+  it("waits longer to end the channel after a bigger archive", () => {
+    expect(eofDelayMs(0)).toBeLessThan(eofDelayMs(8 << 20));
+    expect(eofDelayMs(1 << 40)).toBeLessThanOrEqual(2000);
   });
 
   it("surfaces cp failures", async () => {

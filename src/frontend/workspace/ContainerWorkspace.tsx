@@ -1,21 +1,18 @@
 import React from "react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { createPortal } from "react-dom";
-import {
-  Computer,
-  GripVertical,
-  Monitor,
-  Move,
-  Plus,
-  Replace,
-  X,
-} from "lucide-react";
+import { GripVertical, Monitor, Move, Plus, Replace, X } from "lucide-react";
 import { toast } from "sonner";
 import { WindowManager } from "../vendor/file-manager/components/WindowManager";
 import { ContainerFileManager } from "../ContainerFileManager";
 import { LocalFileManager } from "../LocalFileManager";
 import { isLocalFileBrowserAvailable } from "../vendor/file-manager/lib/local-files";
-import { ContainerList, StateBadge } from "../containers/ContainerList";
+import {
+  ContainerList,
+  ContainerSortSelect,
+  StateBadge,
+  type ContainerSort,
+} from "../containers/ContainerList";
 import type { ContainerLiveState } from "../containerFsApi";
 import { containerName, type ContainerInfo } from "../types";
 import {
@@ -585,6 +582,7 @@ function WorkspaceInner(props: WorkspaceProps) {
           <AddPaneMenu
             canAdd={canAdd}
             desktop={desktop}
+            hasLocal={hasLocal}
             onContainer={() => dispatch({ type: "add", containerId: null })}
             onLocal={() => dispatch({ type: "addLocal" })}
           />,
@@ -645,23 +643,18 @@ function WorkspaceInner(props: WorkspaceProps) {
                 />
               </div>
             ) : pane.containerId === null ? (
-              <div className="h-full overflow-y-auto p-2">
-                <ContainerList
-                  sessionId={sessionId}
-                  onChanged={props.onChanged}
-                  containers={containers}
-                  columns="auto"
-                  onSelectContainer={(id) =>
-                    dispatch({
-                      type: "setContainer",
-                      id: pane.id,
-                      containerId: id,
-                    })
-                  }
-                  search=""
-                  statusFilter="all"
-                />
-              </div>
+              <ContainerPicker
+                sessionId={sessionId}
+                containers={containers}
+                onChanged={props.onChanged}
+                onSelect={(id) =>
+                  dispatch({
+                    type: "setContainer",
+                    id: pane.id,
+                    containerId: id,
+                  })
+                }
+              />
             ) : (
               <ContainerFileManager
                 key={`${pane.id}|${pane.containerId}`}
@@ -1167,15 +1160,60 @@ function MovePaneMenu({ onMove }: { onMove: (zone: WorkspaceZone) => void }) {
   );
 }
 
+/** The container list of a pane that has none yet, with a name filter and an order. */
+function ContainerPicker({
+  sessionId,
+  containers,
+  onChanged,
+  onSelect,
+}: {
+  sessionId: string;
+  containers: ContainerInfo[];
+  onChanged: React.ComponentProps<typeof ContainerList>["onChanged"];
+  onSelect: (containerId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [search, setSearch] = React.useState("");
+  const [sort, setSort] = React.useState<ContainerSort>("name");
+  return (
+    <div className="h-full overflow-y-auto p-2">
+      <div className="mb-2 flex items-center gap-2">
+        <input
+          type="search"
+          autoFocus
+          className="h-7 min-w-0 flex-1 border border-border bg-background px-2 text-xs"
+          placeholder={t("containers.searchPlaceholder")}
+          aria-label={t("containers.searchPlaceholder")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <ContainerSortSelect value={sort} onChange={setSort} />
+      </div>
+      <ContainerList
+        sessionId={sessionId}
+        onChanged={onChanged}
+        containers={containers}
+        columns="auto"
+        onSelectContainer={onSelect}
+        search={search}
+        statusFilter="all"
+        sort={sort}
+      />
+    </div>
+  );
+}
+
 /** "Add pane": a container, or (Desktop only) the local computer. */
 function AddPaneMenu({
   canAdd,
   desktop,
+  hasLocal,
   onContainer,
   onLocal,
 }: {
   canAdd: boolean;
   desktop: boolean;
+  hasLocal: boolean;
   onContainer: () => void;
   onLocal: () => void;
 }) {
@@ -1194,18 +1232,6 @@ function AddPaneMenu({
     "flex w-full items-center gap-1 px-2 py-1 text-left text-xs hover:bg-muted/40";
   return (
     <div ref={ref} className="relative flex items-center gap-1">
-      {desktop && (
-        <button
-          type="button"
-          className="flex items-center gap-1 border border-border px-2 py-0.5 text-xs hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!canAdd}
-          title={canAdd ? t("local.openLocal") : t("workspace.maxPanes")}
-          onClick={onLocal}
-        >
-          <Computer className="size-3.5" />
-          {t("local.addLocal")}
-        </button>
-      )}
       <button
         type="button"
         className="flex items-center gap-1 border border-border px-2 py-0.5 text-xs hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1231,7 +1257,9 @@ function AddPaneMenu({
           </button>
           <button
             type="button"
-            className={item}
+            className={`${item} disabled:cursor-not-allowed disabled:opacity-50`}
+            disabled={hasLocal}
+            title={hasLocal ? t("local.alreadyOpen") : undefined}
             onClick={() => {
               setOpen(false);
               onLocal();

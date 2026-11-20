@@ -1,14 +1,15 @@
 diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
+index 719d70f..2ce0405 100644
 --- a/FileManagerGrid.tsx
 +++ b/FileManagerGrid.tsx
-@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
+@@ -10,6 +10,7 @@ import React, {
+ import { createPortal } from "react-dom";
  import { useVirtualizer } from "@tanstack/react-virtual";
- import { cn } from "@termix-ssh/plugin-sdk/ui";
- import { isActivePane, PANE_ATTR } from "../../paneFocus";
+ import { cn, LoadingState } from "@termix-ssh/plugin-sdk/ui";
 +import { MOUNT_ICON_CLASS, MountLetters } from "../../MountLetters";
+ import { isActivePane, PANE_ATTR } from "../../paneFocus";
  import {
    Folder,
-   File,
 @@ -85,6 +86,15 @@ interface DragState {
    mousePosition?: { x: number; y: number };
  }
@@ -24,8 +25,8 @@ diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
 +
  interface FileManagerGridProps {
    files: FileItem[];
-   /** Show a spinner instead of the empty-folder text while a listing is in flight. */
-@@ -138,6 +148,8 @@ interface FileManagerGridProps {
+   /** Extra status drawn in the footer, between the item and selection counts. */
+@@ -144,6 +154,8 @@ interface FileManagerGridProps {
    onNavigateUp?: () => void;
    /** Scrolls back to the top whenever this value changes (e.g. the folder). */
    scrollResetKey?: string;
@@ -34,7 +35,7 @@ diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
  }
  
  const getFileTypeColor = (file: FileItem): string => {
-@@ -156,14 +168,22 @@ const getFileIcon = (
+@@ -162,14 +174,22 @@ const getFileIcon = (
    file: FileItem,
    viewMode: "grid" | "list" = "grid",
    compact = false,
@@ -61,7 +62,7 @@ diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
      </span>
    );
  };
-@@ -290,6 +310,7 @@ export function FileManagerGrid({
+@@ -300,6 +320,7 @@ export function FileManagerGrid({
    parentPath,
    onNavigateUp,
    scrollResetKey,
@@ -69,7 +70,7 @@ diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
  }: FileManagerGridProps) {
    const { t } = useTranslation();
    const gridRef = useRef<HTMLDivElement>(null);
-@@ -1394,7 +1415,7 @@ export function FileManagerGrid({
+@@ -1484,7 +1505,7 @@ export function FileManagerGrid({
                                    compact ? "mb-1" : "mb-2",
                                  )}
                                >
@@ -78,7 +79,7 @@ diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
                                </div>
                                <div className="w-full flex flex-col items-center pointer-events-none">
                                  {editingFile?.path === file.path ? (
-@@ -1434,6 +1455,14 @@ export function FileManagerGrid({
+@@ -1524,6 +1545,14 @@ export function FileManagerGrid({
                                      → {file.linkTarget}
                                    </p>
                                  )}
@@ -93,7 +94,7 @@ diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
                                </div>
                              </div>
                            );
-@@ -1606,7 +1635,7 @@ export function FileManagerGrid({
+@@ -1706,7 +1735,7 @@ export function FileManagerGrid({
                            )}
                          >
                            <div className="shrink-0">
@@ -102,7 +103,7 @@ diff --git a/FileManagerGrid.tsx b/FileManagerGrid.tsx
                            </div>
                            {isEditing ? (
                              <input
-@@ -1634,6 +1663,14 @@ export function FileManagerGrid({
+@@ -1734,6 +1763,14 @@ export function FileManagerGrid({
                                    → {file.linkTarget}
                                  </span>
                                )}

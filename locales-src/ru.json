@@ -7,6 +7,7 @@
     "addLocal": "Локальные файлы",
     "addContainer": "Контейнер",
     "openLocal": "Файлы этого компьютера",
+    "alreadyOpen": "Панель локальных файлов уже открыта",
     "noContainerPane": "Сначала откройте панель контейнера"
   },
   "localFiles": {
@@ -185,6 +186,7 @@
     "cut": "Вырезано: {{count}}",
     "pasteFailed": "Не удалось вставить",
     "pathCopied": "Путь скопирован",
+    "pathCopyFailed": "Не удалось скопировать путь",
     "chmodDone": "Права изменены",
     "chmodFailed": "Не удалось изменить права",
     "compressDone": "Создан {{name}}",
@@ -410,6 +412,13 @@
     "refresh": "Обновить",
     "loading": "Загрузка контейнеров…",
     "searchPlaceholder": "Поиск контейнеров…",
+    "sortBy": "Сортировка",
+    "sort": {
+      "name": "Имя (А–Я)",
+      "nameDesc": "Имя (Я–А)",
+      "state": "Состояние",
+      "image": "Образ"
+    },
     "allStatuses": "Все",
     "stateRunning": "Запущен",
     "statePaused": "Приостановлен",

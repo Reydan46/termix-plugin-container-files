@@ -1,4 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import express, { type Router } from "express";
 import {
@@ -86,6 +89,7 @@ export async function startServer(
 ): Promise<TestServer> {
   const client = options.client ?? dockerClient();
   let router: Router | null = null;
+  const dataDir = mkdtempSync(join(tmpdir(), "cf-data-"));
   const mock = createMockCtx({
     pluginId: manifest.id,
     manifest,
@@ -94,6 +98,8 @@ export async function startServer(
     permissions: options.permissions ?? ["container-files.use"],
     sshHosts: [sshHost(7), sshHost(8)],
     sshClient: client,
+    dataDir,
+    sandbox: true,
     ...options.mock,
   });
 

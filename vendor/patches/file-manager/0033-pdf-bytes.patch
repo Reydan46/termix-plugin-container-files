@@ -1,0 +1,85 @@
+Give pdf.js the PDF bytes instead of a blob: or data: URL, and show why a load
+failed: a plugin frame cannot let pdf.js fetch those URLs itself.
+diff --git a/components/PdfPreview.tsx b/components/PdfPreview.tsx
+index e4eeba9..445343b 100644
+--- a/components/PdfPreview.tsx
++++ b/components/PdfPreview.tsx
+@@ -1,4 +1,4 @@
+-import React, { useState } from "react";
++import React, { useEffect, useMemo, useState } from "react";
+ import { Document, Page, pdfjs } from "react-pdf";
+ import { AlertCircle, Download } from "lucide-react";
+ import { Button, LoadingState } from "@termix-ssh/plugin-sdk/ui";
+@@ -30,6 +30,33 @@ export function PdfPreview({
+   const [pageNumber, setPageNumber] = useState(1);
+   const [pdfScale, setPdfScale] = useState(1.2);
+   const [pdfError, setPdfError] = useState(false);
++  const [pdfDetail, setPdfDetail] = useState("");
++  const [bytes, setBytes] = useState<Uint8Array | null>(null);
++
++  // pdf.js would load a blob: or data: URL over the network, which a plugin
++  // frame may not do. Hand it the bytes instead.
++  useEffect(() => {
++    let live = true;
++    setBytes(null);
++    setPdfError(false);
++    setPdfDetail("");
++    void (async () => {
++      try {
++        const response = await fetch(mediaSource(content, "application/pdf"));
++        const data = new Uint8Array(await response.arrayBuffer());
++        if (live) setBytes(data);
++      } catch (error) {
++        if (!live) return;
++        setPdfDetail(error instanceof Error ? error.message : String(error));
++        setPdfError(true);
++      }
++    })();
++    return () => {
++      live = false;
++    };
++  }, [content]);
++  // pdf.js takes the buffer it is given, so every load gets its own copy.
++  const file = useMemo(() => (bytes ? { data: bytes.slice() } : null), [bytes]);
+ 
+   return (
+     <div className="h-full flex flex-col bg-background">
+@@ -94,6 +121,9 @@ export function PdfPreview({
+                 {t("fileManager.cannotLoadPdf")}
+               </h3>
+               <p className="text-sm mb-4">{t("fileManager.pdfLoadError")}</p>
++              {pdfDetail && (
++                <p className="text-xs mb-4 font-mono break-all">{pdfDetail}</p>
++              )}
+               {onDownload && (
+                 <Button
+                   variant="outline"
+@@ -105,9 +135,13 @@ export function PdfPreview({
+                 </Button>
+               )}
+             </div>
++          ) : !file ? (
++            <div className="p-8">
++              <LoadingState label={t("fileManager.loadingPdf")} />
++            </div>
+           ) : (
+             <Document
+-              file={mediaSource(content, "application/pdf")}
++              file={file}
+               onLoadSuccess={({ numPages }) => {
+                 setNumPages(numPages);
+                 setPdfError(false);
+@@ -117,7 +151,12 @@ export function PdfPreview({
+                   height: 600,
+                 });
+               }}
+-              onLoadError={() => {
++              onLoadError={(error) => {
++                setPdfDetail(error.message);
++                setPdfError(true);
++              }}
++              onSourceError={(error) => {
++                setPdfDetail(error.message);
+                 setPdfError(true);
+               }}
+               loading={

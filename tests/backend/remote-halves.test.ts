@@ -56,11 +56,13 @@ async function pair(fs: LocalFs) {
   const remote = await start();
   const local = await start({
     mock: {
+      // The SDK mock refuses the AbortSignal and stream bodies pluginFetch takes.
+      sandbox: false,
       desktopLocal: {
         available: () => true,
         pluginFetch: forwardTo(remote),
         fs,
-      } as PluginDesktopLocal,
+      } as unknown as PluginDesktopLocal,
     },
   });
   const connected = await remote.request("POST", "/ssh/connect", {
@@ -269,10 +271,12 @@ describe("local pane to a container on the server", () => {
     expect(r.body).toMatchObject({ bytes: 5, files: 1, dirs: 0 });
 
     const out = await entriesOf(received);
-    expect(out.map((e) => e.name)).toEqual([".cf-part-up-halve-n.txt"]);
+    expect(out).toHaveLength(1);
+    const temp = /^\.cf-part-[0-9a-f]{8}-n\.txt$/.exec(out[0].name)?.[0];
+    expect(temp).toBeTruthy();
     expect(out[0].data).toBe("hello");
     const mv = remote.client.commands.find((c) => c.includes("mv -f"));
-    expect(mv).toContain("'/data/.cf-part-up-halve-n.txt' '/data/n.txt'");
+    expect(mv).toContain(`'/data/${temp}' '/data/n.txt'`);
     const status = await local.request("GET", "/transfers/up-halves2");
     expect(status.body).toMatchObject({ state: "done", total: 5, bytes: 5 });
   });
